@@ -19,35 +19,54 @@
     <div id="map" style="width: 800px; height: 800px"></div>
 
     <script>
-      function getDataInBoundingBox(bbox) {
-        // const url = `https://overpass-api.de/api/interpreter?data=[out:json];nwr(${bbox});out;`;
+      let allWays = [];
+      function addBlock(lat, lng) {}
+      // Retrieve data in a bounding box using the Overpass API
+      function fetchDataInBoundingBox(bbox) {
         const url = `https://overpass-api.de/api/interpreter?data=[out:json];(way["highway"](${bbox});>;);out;`;
 
-        return fetch(url)
-          .then((response) => {
-            console.log(response);
-            return response.json();
-          })
-
-          .then((data) => {
-            console.log(data);
-            // filter out all nodes
-            let returnData = {};
-            returnData.nodes = data.elements.filter(
-              (element) => element.type === "node"
-            );
-            // filter out all ways
-            returnData.ways = data.elements.filter(
-              (element) => element.type === "way"
-            );
-            // filter out all relations
-            returnData.relations = data.elements.filter(
-              (element) => element.type === "relation"
-            );
-
-            return returnData;
+        // Check if the response is already in the cache
+        if ("caches" in window) {
+          return caches.match(url).then((cachedResponse) => {
+            if (cachedResponse) {
+              return cachedResponse.json();
+            } else {
+              // If the response is not in the cache, fetch it and add it to the cache
+              return fetch(url).then((response) => {
+                const clonedResponse = response.clone();
+                caches.open("osm-cache").then((cache) => {
+                  cache.put(url, clonedResponse);
+                });
+                return response.json();
+              });
+            }
           });
+        } else {
+          // If the browser does not support the Cache API, fetch the response normally
+          return fetch(url).then((response) => response.json());
+        }
       }
+      function getDataInBoundingBox(bbox) {
+        return fetchDataInBoundingBox(bbox).then((data) => {
+          console.log(data);
+          // filter out all nodes
+          let returnData = {};
+          returnData.nodes = data.elements.filter(
+            (element) => element.type === "node"
+          );
+          // filter out all ways
+          returnData.ways = data.elements.filter(
+            (element) => element.type === "way"
+          );
+          // filter out all relations
+          returnData.relations = data.elements.filter(
+            (element) => element.type === "relation"
+          );
+
+          return returnData;
+        });
+      }
+
       const map = L.map("map").setView(
         [43.53255820104378, -80.23672699928285],
         17
@@ -87,10 +106,11 @@
       const popup = L.popup();
       let allCoords = [];
       function onMapClick(e) {
-        popup
-          .setLatLng(e.latlng)
-          .setContent(`You clicked the map at ${e.latlng.toString()}`)
-          .openOn(map);
+        // popup
+        //   .setLatLng(e.latlng)
+        //   .setContent(`You clicked the map at ${e.latlng.toString()}`)
+        //   .openOn(map);
+
         // // find closes coord and display tags
         // const closestCoord = allCoords.reduce((prev, curr) => {
         //   const prevDist = Math.sqrt(
@@ -110,6 +130,12 @@
         //   .setLatLng(e.latlng)
         //   .setContent(`Tags: ${JSON.stringify(tags)}`)
         //   .openOn(map);
+        L.circle([e.latlng.lat, e.latlng.lng], {
+          color: "green",
+          weight: 10,
+          radius: 1,
+        }).addTo(map);
+        addBlock(e.latlng.lat, e.latlng.lng);
       }
 
       map.on("click", onMapClick);
@@ -123,8 +149,9 @@
       // sort bbox coordinates by latitude
       bbox.sort((a, b) => a[0] - b[0]);
 
-      // draw bbox using leaflet
-      L.rectangle(bbox, { color: "#ff7800", weight: 1 }).addTo(map);
+      //   // draw bbox using leaflet
+      //   L.rectangle(bbox, { color: "#ff7800", weight: 1 }).addTo(map);
+
       getDataInBoundingBox(bbox)
         .then((data) => {
           data.nodes.forEach((coord) => {
@@ -150,6 +177,7 @@
 
             // draw the way
             if (coords.length == 2 && way.tags.highway) {
+              allWays.push(way);
               L.polyline(coords, { color: "#00ff00", weight: 1 }).addTo(map);
 
               console.log(way.tags);
