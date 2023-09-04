@@ -17,15 +17,32 @@
   </head>
   <body>
     <div id="map" style="width: 800px; height: 800px"></div>
+    <button id="make-blocks-button">Make Blocks</button>
 
     <script>
       let allWays = [];
+      let allMeters = [];
       // Latitude: 1 deg = 110.574 km. Longitude: 1 deg = 111.320*cos(latitude) km.
       const latkm = 110.574;
       const lngkm = 111.32 * Math.cos((43.53255820104378 * Math.PI) / 180); // hard-coded for now
       let lngRatio = lngkm / latkm;
       lngRatio *= lngRatio; // hack
       const invLngRatio = latkm / lngkm;
+      // button handler for make blocks
+      function MakeBlocksClicked() {
+        // clear all blocks
+        for (let key in blockCache) {
+          map.removeLayer(blockCache[key]);
+        }
+        blockCache = {};
+        // get all meters
+        allMeters.forEach((meter) => {
+          addBlock(meter.coords[0], meter.coords[1]);
+        });
+      }
+      document
+        .getElementById("make-blocks-button")
+        .addEventListener("click", MakeBlocksClicked);
 
       function distanceToSegment(point, segment) {
         const [p1, p2] = segment;
@@ -56,6 +73,7 @@
         const dy2 = (y - nearestY) * lngRatio; // hack to account for lngitude;
         return Math.sqrt(dx2 * dx2 + dy2 * dy2);
       }
+      let blockCache = {};
       function addBlock(lat, lng) {
         // find closest way,using distanceToSegment
         let closestWay = allWays.reduce((prev, curr) => {
@@ -93,9 +111,16 @@
         console.log(
           `normal: ${normalX}, ${normalY} dot: ${dot} diff: ${diffX}, ${diffY}`
         );
+        let reversed = false;
         if (dot < 0) {
           normalX *= -1;
           normalY *= -1;
+          reversed = true;
+        }
+
+        let key = `${closestWay.join(",")}:${reversed}`;
+        if (key in blockCache) {
+          return;
         }
 
         let startX = closestWay[0][0] + normalX * dist - wayDirX * dist;
@@ -132,6 +157,7 @@
             fillOpacity: 0.9,
           }
         ).addTo(map);
+        blockCache[key] = polygon;
         console.log("closest way");
         console.log(closestWay);
       }
@@ -244,13 +270,13 @@
         //   .setLatLng(e.latlng)
         //   .setContent(`Tags: ${JSON.stringify(tags)}`)
         //   .openOn(map);
-        L.circle([e.latlng.lat, e.latlng.lng], {
+        let c = L.circle([e.latlng.lat, e.latlng.lng], {
           color: "green",
           weight: 10,
           radius: 1,
         }).addTo(map);
 
-        addBlock(e.latlng.lat, e.latlng.lng);
+        allMeters.push({ coords: [e.latlng.lat, e.latlng.lng], gfx: c });
       }
 
       map.on("click", onMapClick);
@@ -291,11 +317,15 @@
             coords = coords.filter((coord) => coord[0] !== null);
 
             // draw the way
-            if (coords.length == 2 && way.tags.highway) {
-              allWays.push(coords);
-              L.polyline(coords, { color: "#00ff00", weight: 1 }).addTo(map);
-
-              //  console.log(way.tags);
+            if (coords.length > 1 && way.tags.highway) {
+              // push every line segment into allWays
+              for (let i = 0; i < coords.length - 1; i++) {
+                allWays.push([coords[i], coords[i + 1]]);
+                L.polyline([coords[i], coords[i + 1]], {
+                  color: "#00ff00",
+                  weight: 1,
+                }).addTo(map);
+              }
             }
           });
         })
