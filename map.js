@@ -1,16 +1,21 @@
 let allRoads = [];
 let allMeters = [];
 let parkingBlocks = {};
-let starting_lat = 43.53255820104378; // hard-coded for now
-let starting_lng = -80.23672699928285;
+const starting_lat = 43.53255820104378; // hard-coded for now
+const starting_lng = -80.23672699928285;
 
 // Latitude: 1 deg = 110.574 km. Longitude: 1 deg = 111.320*cos(latitude) km.
 const latkm = 110.574;
 const lngkm = 111.32 * Math.cos((starting_lat * Math.PI) / 180);
+const conversionFactor = lngkm / latkm;
 
-let lngRatio = lngkm / latkm;
-lngRatio *= lngRatio; // hack
-const invLngRatio = latkm / lngkm;
+function convertMapToVec([lat, lng]) {
+  return { x: lat, y: lng * conversionFactor };
+}
+
+function convertVecToMap({ x, y }) {
+  return [x, y / conversionFactor];
+}
 
 const map = L.map("map").setView([starting_lat, starting_lng], 17);
 const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -37,7 +42,7 @@ function OnMakeBlocksButton_Clicked() {
 }
 
 function addBlockForMeter(lat, lng) {
-  let meterLocation = { x: lat, y: lng };
+  let meterLocation = convertMapToVec([lat, lng]);
   // find closest road
   let closestRoad = allRoads.reduce((prev, curr) => {
     const prevDist = distancePointToLineSegment(meterLocation, prev);
@@ -52,12 +57,11 @@ function addBlockForMeter(lat, lng) {
   // get normal vector
 
   let normal = vecNormalize({
-    x: -roadDirection.y * lngRatio,
+    x: -roadDirection.y,
     y: roadDirection.x,
   });
 
   let diff = vecSubtract(meterLocation, closestRoad[0]);
-  diff.y = diff.y * lngRatio; // hack
 
   diff = vecNormalize(diff);
 
@@ -93,10 +97,10 @@ function addBlockForMeter(lat, lng) {
   // draw the block
   const polygon = L.polygon(
     [
-      [start.x, start.y],
-      [end.x, end.y],
-      [end2.x, end2.y],
-      [start2.x, start2.y],
+      convertVecToMap(start),
+      convertVecToMap(end),
+      convertVecToMap(end2),
+      convertVecToMap(start2),
     ],
     {
       color: "#ff7800",
@@ -222,7 +226,10 @@ fetchDataInBoundingBox(bbox)
       if (coords.length > 1 && way.tags.highway) {
         // push every line segment into allWays
         for (let i = 0; i < coords.length - 1; i++) {
-          allRoads.push([arrayToVec(coords[i]), arrayToVec(coords[i + 1])]);
+          allRoads.push([
+            convertMapToVec(coords[i]),
+            convertMapToVec(coords[i + 1]),
+          ]);
           L.polyline([coords[i], coords[i + 1]], {
             color: "#00ff00",
             weight: 1,
@@ -254,9 +261,8 @@ function distancePointToLineSegment(point, segment) {
   } else {
     nearestPt = { x: p1.x + param * diff.x, y: p1.y + param * diff.y };
   }
-  // hack to account for lngtiude
+
   let diff2 = vecSubtract(point, nearestPt);
-  diff2.y *= lngRatio;
   return vecLength(diff2);
 }
 
