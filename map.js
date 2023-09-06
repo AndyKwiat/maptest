@@ -72,7 +72,7 @@ function addBlockForMeter(lat, lng) {
     reversed = true;
   }
 
-  let key = `${closestRoad.join(",")}:${reversed}`;
+  let key = `${closestRoad[0].x},${closestRoad[0].y},${closestRoad[1].x}, ${closestRoad[1].y} :${reversed}`;
   if (key in parkingBlocks) {
     return;
   }
@@ -175,30 +175,6 @@ function fetchDataInBoundingBox(bbox) {
 const popup = L.popup();
 let allCoords = [];
 function onMapClick(e) {
-  // popup
-  //   .setLatLng(e.latlng)
-  //   .setContent(`You clicked the map at ${e.latlng.toString()}`)
-  //   .openOn(map);
-
-  // // find closes coord and display tags
-  // const closestCoord = allCoords.reduce((prev, curr) => {
-  //   const prevDist = Math.sqrt(
-  //     Math.pow(prev.lat - e.latlng.lat, 2) +
-  //       Math.pow(prev.lon - e.latlng.lng, 2)
-  //   );
-  //   const currDist = Math.sqrt(
-  //     Math.pow(curr.lat - e.latlng.lat, 2) +
-  //       Math.pow(curr.lon - e.latlng.lng, 2)
-  //   );
-  //   return prevDist < currDist ? prev : curr;
-  // });
-  // console.log(closestCoord);
-  // let tags = closestCoord.tags;
-  // // display popup with tags
-  // popup
-  //   .setLatLng(e.latlng)
-  //   .setContent(`Tags: ${JSON.stringify(tags)}`)
-  //   .openOn(map);
   let c = L.circle([e.latlng.lat, e.latlng.lng], {
     color: "green",
     weight: 10,
@@ -213,13 +189,10 @@ const bbox = [
   [43.543523, -80.225332],
   [43.511111, -80.250074],
 ];
-
-//   43.533523, -80.240074
-//   43.531111, -80.235332
 // sort bbox coordinates by latitude
 bbox.sort((a, b) => a[0] - b[0]);
 
-//   // draw bbox using leaflet
+// draw bbox using leaflet
 //   L.rectangle(bbox, { color: "#ff7800", weight: 1 }).addTo(map);
 
 fetchDataInBoundingBox(bbox)
