@@ -35,53 +35,40 @@ function OnMakeBlocksButton_Clicked() {
     addBlockForMeter(meter.coords[0], meter.coords[1]);
   });
 }
-function vecSubtract(v1, v2) {
-  return [v1[0] - v2[0], v1[1] - v2[1]];
-}
-function vecNormalize(v) {
-  let len = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
-  return [v[0] / len, v[1] / len];
-}
 
 function addBlockForMeter(lat, lng) {
+  let meterLocation = { x: lat, y: lng };
   // find closest road
   let closestRoad = allRoads.reduce((prev, curr) => {
-    const prevDist = distancePointToLineSegment([lat, lng], prev);
-    const currDist = distancePointToLineSegment([lat, lng], curr);
+    const prevDist = distancePointToLineSegment(meterLocation, prev);
+    const currDist = distancePointToLineSegment(meterLocation, curr);
     return prevDist < currDist ? prev : curr;
   });
 
-  let dist = distancePointToLineSegment([lat, lng], closestRoad);
+  let dist = distancePointToLineSegment(meterLocation, closestRoad);
   let roadDirection = vecSubtract(closestRoad[1], closestRoad[0]);
   roadDirection = vecNormalize(roadDirection);
 
-  const blockSize = 11.5 / 111139; // 2.5 meters in degrees
   // get normal vector
 
-  let normalX = -roadDirection[1] * lngRatio; // hack
-  let normalY = roadDirection[0];
+  let normal = vecNormalize({
+    x: -roadDirection.y * lngRatio,
+    y: roadDirection.x,
+  });
 
-  // normalize normal
-  let normalLen = Math.sqrt(normalX * normalX + normalY * normalY);
-  normalX /= normalLen;
-  normalY /= normalLen;
+  let diff = vecSubtract(meterLocation, closestRoad[0]);
+  diff.y = diff.y * lngRatio; // hack
 
-  let diffX = lat - closestRoad[0][0];
-  let diffY = lng - closestRoad[0][1];
-  diffY = diffY * lngRatio; // hack
-  //normalize diff
-  let diffLen = Math.sqrt(diffX * diffX + diffY * diffY);
-  diffX /= diffLen;
-  diffY /= diffLen;
-  let dot = diffX * normalX + diffY * normalY;
+  diff = vecNormalize(diff);
+
+  let dot = vecDot(diff, normal);
 
   console.log(
-    `normal: ${normalX}, ${normalY} dot: ${dot} diff: ${diffX}, ${diffY}`
+    `normal: ${normal.x}, ${normal.y} dot: ${dot} diff: ${diff.x}, ${diff.y}`
   );
   let reversed = false;
   if (dot < 0) {
-    normalX *= -1;
-    normalY *= -1;
+    normal = vecScale(normal, -1);
     reversed = true;
   }
 
@@ -90,31 +77,26 @@ function addBlockForMeter(lat, lng) {
     return;
   }
 
-  let startX = closestRoad[0][0] + normalX * dist - wayDirX * dist;
-  let startY = closestRoad[0][1] + normalY * dist - wayDirY * dist;
-  let sx2 = startX + normalX * blockSize;
-  let sy2 = startY + normalY * blockSize;
+  const blockSize = 11.5 / 111139; // 2.5 meters in degrees
+  // block starts at the meter and goes blockSize meters in the normal direction (away from the road)
+  let start = vecAdd(
+    closestRoad[0],
+    vecAdd(vecScale(normal, dist), vecScale(roadDirection, dist))
+  );
+  let start2 = vecAdd(start, vecScale(normal, blockSize));
+  let end = vecAdd(
+    closestRoad[1],
+    vecAdd(vecScale(normal, dist), vecScale(roadDirection, -dist))
+  );
+  let end2 = vecAdd(end, vecScale(normal, blockSize));
 
-  let endX = closestRoad[1][0] + normalX * dist + wayDirX * dist;
-  let endY = closestRoad[1][1] + normalY * dist + wayDirY * dist;
-  let ex2 = endX + normalX * blockSize;
-  let ey2 = endY + normalY * blockSize;
-  // const p = L.polyline(
-  //   [
-  //     [lat, lng],
-  //     [lat + wayDirX * blockSize, lng + wayDirY * blockSize],
-  //     [lat, lng],
-  //     [lat + normalX * blockSize, lng + normalY * blockSize],
-  //   ],
-  //   { color: "#ff7800", weight: 2 }
-  // ).addTo(map);
-
+  // draw the block
   const polygon = L.polygon(
     [
-      [startX, startY],
-      [endX, endY],
-      [ex2, ey2],
-      [sx2, sy2],
+      [start.x, start.y],
+      [end.x, end.y],
+      [end2.x, end2.y],
+      [start2.x, start2.y],
     ],
     {
       color: "#ff7800",
@@ -125,8 +107,6 @@ function addBlockForMeter(lat, lng) {
     }
   ).addTo(map);
   parkingBlocks[key] = polygon;
-  console.log("closest way");
-  console.log(closestRoad);
 }
 function fetchWithCaching(url) {
   // Check if the response is already in the cache
@@ -269,7 +249,7 @@ fetchDataInBoundingBox(bbox)
       if (coords.length > 1 && way.tags.highway) {
         // push every line segment into allWays
         for (let i = 0; i < coords.length - 1; i++) {
-          allRoads.push([coords[i], coords[i + 1]]);
+          allRoads.push([arrayToVec(coords[i]), arrayToVec(coords[i + 1])]);
           L.polyline([coords[i], coords[i + 1]], {
             color: "#00ff00",
             weight: 1,
@@ -282,30 +262,57 @@ fetchDataInBoundingBox(bbox)
 
 function distancePointToLineSegment(point, segment) {
   const [p1, p2] = segment;
-  const [x, y] = point;
 
-  const dx = p2[0] - p1[0];
-  const dy = p2[1] - p1[1];
-  const dot = dx * (x - p1[0]) + dy * (y - p1[1]);
-  const lenSq = dx * dx + dy * dy;
+  const diff = vecSubtract(p2, p1);
+
+  const dot = vecDot(diff, vecSubtract(point, p1));
+
+  const lenSq = diff.x * diff.x + diff.y * diff.y;
   let param = -1;
   if (lenSq !== 0) {
     param = dot / lenSq;
   }
 
-  let nearestX, nearestY;
+  let nearestPt;
   if (param < 0) {
-    nearestX = p1[0];
-    nearestY = p1[1];
+    nearestPt = p1;
   } else if (param > 1) {
-    nearestX = p2[0];
-    nearestY = p2[1];
+    nearestPt = p2;
   } else {
-    nearestX = p1[0] + param * dx;
-    nearestY = p1[1] + param * dy;
+    nearestPt = { x: p1.x + param * diff.x, y: p1.y + param * diff.y };
   }
+  // hack to account for lngtiude
+  let diff2 = vecSubtract(point, nearestPt);
+  diff2.y *= lngRatio;
+  return vecLength(diff2);
+}
 
-  const dx2 = x - nearestX;
-  const dy2 = (y - nearestY) * lngRatio; // hack to account for lngitude;
-  return Math.sqrt(dx2 * dx2 + dy2 * dy2);
+// substracts two vectors
+function vecSubtract(v1, v2) {
+  return { x: v1.x - v2.x, y: v1.y - v2.y };
+}
+
+function vecAdd(v1, v2) {
+  return { x: v1.x + v2.x, y: v1.y + v2.y };
+}
+function vecNormalize(v) {
+  const len = Math.sqrt(v.x * v.x + v.y * v.y);
+  return { x: v.x / len, y: v.y / len };
+}
+
+function arrayToVec(arr) {
+  return { x: arr[0], y: arr[1] };
+}
+
+// dot product of two vectors
+function vecDot(v1, v2) {
+  return v1.x * v2.x + v1.y * v2.y;
+}
+
+function vecLength(v) {
+  return Math.sqrt(v.x * v.x + v.y * v.y);
+}
+
+function vecScale(v, s) {
+  return { x: v.x * s, y: v.y * s };
 }
