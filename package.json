@@ -1,0 +1,21 @@
+{
+  "name": "maptest",
+  "version": "1.0.0",
+  "main": "index.html",
+  "scripts": {
+    "build": "browserify src/main.ts -p tsify -o dist/bundle.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/leaflet": "^1.9.12",
+    "@types/node": "^22.0.0",
+    "browserify": "^17.0.0",
+    "tsify": "^5.0.4",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4"
+  }
+}
