@@ -2,6 +2,7 @@ import * as L from 'leaflet';
 import { getDistance, getDistanceFromLine, getRhumbLineBearing } from 'geolib';
 
 import IPSMeters from './ipsmeters.csv';
+
 function convertToObjectArray(csvData: string[][]): Record<string, string>[] {
   const [headers, ...rows] = csvData;
 
@@ -58,6 +59,11 @@ const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
 
+// const tiles = L.tileLayer("http://services.arcgisonline.com/arcgis/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+//   maxZoom: 99,
+//   attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+// }).addTo(map);
+
 meters.forEach((meter: any) => {
   if (!meter.Latitude || !meter.Longitude) {
     console.log("Skipping meter with missing lat/long: ", meter);
@@ -70,13 +76,10 @@ meters.forEach((meter: any) => {
   }).addTo(map).bindTooltip(`SubArea: ${meter.SubArea} Pole: ${meter.Pole}`);
 });
 
-// const tiles = L.tileLayer("http://services.arcgisonline.com/arcgis/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
-//   maxZoom: 99,
-//   attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-// }).addTo(map);
 
 
-map.on("click", onMapClick);
+
+// map.on("click", onMapClick);
 document.getElementById("make-blocks-button")?.addEventListener("click", onMakeBlocksButton_Clicked);
 
 function toLatLon(node: Node): [number, number] {
@@ -86,11 +89,11 @@ function toLatLon(node: Node): [number, number] {
 fetchDataInBoundingBox(bbox)
   .then((data) => {
     data.nodes.forEach((coord: Node) => {
-      // L.circle([coord.lat, coord.lon], {
-      //   color: "#ff7800",
-      //   weight: 1,
-      //   radius: 5,
-      // }).addTo(map);
+      L.circle([coord.lat, coord.lon], {
+        color: "#ffff00",
+        weight: 1,
+        radius: 3,
+      }).addTo(map);
     });
 
     data.ways.forEach((way: Way) => {
@@ -102,33 +105,26 @@ fetchDataInBoundingBox(bbox)
         }
       });
 
-      if (coords.length > 1 && way.tags.highway) {
+      if (coords.length > 1 && way.tags.highway != 'footway' && way.tags.highway != 'service'
+        && way.tags.highway != 'path' && way.tags.highway != 'cycleway') {
+
+        let tagString = Object.entries(way.tags)
+          .map(([key, value]) => `${key}: ${value}`)
+          .join('<br/>');
+
         for (let i = 0; i < coords.length - 1; i++) {
           allRoadSegments.push([coords[i], coords[i + 1]]);
           L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
             color: "#00ff00",
-            weight: 1,
-          }).addTo(map);
+            weight: 4,
+          }).addTo(map).bindTooltip(tagString);
         }
       }
     });
   })
   .catch((error) => console.error(error));
 
-function onMapClick(e: L.LeafletMouseEvent) {
-  let c = L.circle([e.latlng.lat, e.latlng.lng], {
-    color: "green",
-    weight: 10,
-    radius: 1,
-  }).addTo(map);
 
-  allMeters.push({ coords: [e.latlng.lat, e.latlng.lng], gfx: c });
-
-  const bounds = map.getBounds();
-  console.log(`Current bounds: 
-    Southwest: ${bounds.getSouthWest().lat}, ${bounds.getSouthWest().lng}
-    Northeast: ${bounds.getNorthEast().lat}, ${bounds.getNorthEast().lng}`);
-}
 
 function onMakeBlocksButton_Clicked() {
   for (let key in parkingBlocks) {
