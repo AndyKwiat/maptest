@@ -3,18 +3,7 @@ import { getDistance, getDistanceFromLine, getRhumbLineBearing } from 'geolib';
 
 import IPSMeters from './ipsmeters.csv';
 
-function convertToObjectArray(csvData: string[][]): Record<string, string>[] {
-  const [headers, ...rows] = csvData;
 
-  return rows.map(row => {
-    const obj: Record<string, string> = {};
-    headers.forEach((header, index) => {
-      obj[header] = row[index];
-    });
-    return obj;
-  });
-}
-const meters = convertToObjectArray(IPSMeters);
 
 interface Node {
   id: number;
@@ -24,45 +13,43 @@ interface Node {
 
 interface Way {
   nodes: number[];
+
   tags: {
     highway?: string;
+    name?: string;
   };
 }
 
-interface MapCoord {
-  lon: number;
-  lat: number;
-}
 
-interface OverpassResponse {
-  elements: (Node | Way | any)[];
-}
 
-let allRoadSegments: [Node, Node][] = [];
-let allMeters: { coords: [number, number]; gfx: L.Circle }[] = [];
-let parkingBlocks: { [key: string]: L.Polygon } = {};
+
 
 const starting_lat = 37.87; // hard-coded for now
 const starting_lng = -122.3;
-
 const bbox: [number, number][] = [
   [37.895988598965666, -122.23663330078126],
   [37.84178360198902, -122.3052978515625],
 ];
 
+let allRoadSegments: [Node, Node][] = [];
+let parkingBlocks: { [key: string]: L.Polygon } = {};
+const meters = convertToObjectArray(IPSMeters);
+// build meters subarea map
 
 
 const map = L.map("map", { attributionControl: false }).setView([starting_lat, starting_lng], 17);
+// Try to load the saved position
 
-const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+const savedPosition = loadMapPosition();
+if (savedPosition) {
+  map.setView([savedPosition.lat, savedPosition.lng], savedPosition.zoom);
+}
+map.on('moveend', () => saveMapPosition(map));
+
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 99,
   attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
-
-// const tiles = L.tileLayer("http://services.arcgisonline.com/arcgis/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
-//   maxZoom: 99,
-//   attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-// }).addTo(map);
 
 meters.forEach((meter: any) => {
   if (!meter.Latitude || !meter.Longitude) {
@@ -75,11 +62,43 @@ meters.forEach((meter: any) => {
     radius: 2,
   }).addTo(map).bindTooltip(`SubArea: ${meter.SubArea} Pole: ${meter.Pole}`);
 });
+function stripStreetName(input: string): string {
+  // List of street types to remove
+  const streetTypes = [
+    "STREET", "ST", "AVENUE", "AVE", "ROAD", "RD", "BOULEVARD", "BLVD",
+    "LANE", "LN", "DRIVE", "DR", "COURT", "CT", "PLACE", "PL", "TERRACE", "TER",
+    "WAY", "CIRCLE", "CIR", "ALLEY", "ALY", "PARKWAY", "PKWY"
+  ];
 
+  // Convert to uppercase and remove numbers
+  let result = input.toUpperCase().replace(/\d+/g, "");
 
+  // Remove street types
+  streetTypes.forEach(type => {
+    result = result.replace(new RegExp(`\\b${type}\\.?\\b`, "g"), "");
+  });
 
+  // Remove extra spaces and trim
+  result = result.replace(/\s+/g, " ").trim();
 
-// map.on("click", onMapClick);
+  return result;
+}
+const SubAreasWithMeters = new Set(
+  meters.map(obj =>
+    obj.SubArea ? stripStreetName(obj.SubArea)
+      : ""
+  )
+);
+
+console.log(SubAreasWithMeters);
+
+map.on("click", onMapClick);
+function onMapClick(e: L.LeafletMouseEvent) {
+  // addBlockForMeter(e.latlng.lat, e.latlng.lng);
+  // show current bounding box in console
+  console.log(map.getBounds().toBBoxString());
+}
+
 document.getElementById("make-blocks-button")?.addEventListener("click", onMakeBlocksButton_Clicked);
 
 function toLatLon(node: Node): [number, number] {
@@ -89,11 +108,11 @@ function toLatLon(node: Node): [number, number] {
 fetchDataInBoundingBox(bbox)
   .then((data) => {
     data.nodes.forEach((coord: Node) => {
-      L.circle([coord.lat, coord.lon], {
-        color: "#ffff00",
-        weight: 1,
-        radius: 3,
-      }).addTo(map);
+      // L.circle([coord.lat, coord.lon], {
+      //   color: "#ffff00",
+      //   weight: 1,
+      //   radius: 3,
+      // }).addTo(map);
     });
 
     data.ways.forEach((way: Way) => {
@@ -105,8 +124,14 @@ fetchDataInBoundingBox(bbox)
         }
       });
 
+      if (way.tags.name && !SubAreasWithMeters.has(stripStreetName(way.tags.name))) {
+        // console.log("Skipping way with no meters: ", way.tags.name);
+        return;
+      }
+
       if (coords.length > 1 && way.tags.highway != 'footway' && way.tags.highway != 'service'
         && way.tags.highway != 'path' && way.tags.highway != 'cycleway') {
+
 
         let tagString = Object.entries(way.tags)
           .map(([key, value]) => `${key}: ${value}`)
@@ -132,9 +157,6 @@ function onMakeBlocksButton_Clicked() {
   }
   parkingBlocks = {};
 
-  allMeters.forEach((meter) => {
-    addBlockForMeter(meter.coords[0], meter.coords[1]);
-  });
 }
 
 function addBlockForMeter(lat: number, lng: number) {
@@ -210,4 +232,30 @@ function fetchWithCaching(url: string) {
   } else {
     return fetch(url).then((response) => response.json());
   }
+}
+
+function convertToObjectArray(csvData: string[][]): Record<string, string>[] {
+  const [headers, ...rows] = csvData;
+
+  return rows.map(row => {
+    const obj: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      obj[header] = row[index];
+    });
+    return obj;
+  });
+}
+
+function saveMapPosition(map: L.Map) {
+  const center = map.getCenter();
+  const zoom = map.getZoom();
+  localStorage.setItem('mapPosition', JSON.stringify({
+    lat: center.lat,
+    lng: center.lng,
+    zoom: zoom
+  }));
+}
+function loadMapPosition(): { lat: number; lng: number; zoom: number } | null {
+  const savedPosition = localStorage.getItem('mapPosition');
+  return savedPosition ? JSON.parse(savedPosition) : null;
 }
