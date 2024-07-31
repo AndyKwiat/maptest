@@ -25,6 +25,11 @@ interface RoadSegment {
   way: Way;
 }
 
+interface RoadSegmentChain {
+  segments: RoadSegment[];
+}
+
+
 
 const starting_lat = 37.87; // hard-coded for now
 const starting_lng = -122.3;
@@ -33,8 +38,8 @@ const bbox: [number, number][] = [  // bounding box for Berkeley
   [37.84178360198902, -122.3052978515625],
 ];
 
-let allRoadSegments: RoadSegment[] = [];
-let roadSegmentsByName: { [key: string]: RoadSegment[] } = {};
+let possibleMeterRoadSegments: RoadSegment[] = [];
+let possibleMeterRoadSegmentsByName: { [key: string]: RoadSegment[] } = {};
 let parkingBlocks: { [key: string]: L.Polygon } = {};
 const meters = convertToObjectArray(IPSMeters);
 // build meters subarea map
@@ -109,6 +114,14 @@ function toLatLon(node: Node): [number, number] {
   return [node.lat, node.lon];
 }
 async function main() {
+  const nodeToRoadSegmentMap = new Map<number, RoadSegment[]>();
+  function addNodeToRoadSegmentMap(node: Node, roadSegment: RoadSegment) {
+    if (!nodeToRoadSegmentMap.has(node.id)) {
+      nodeToRoadSegmentMap.set(node.id, []);
+    }
+    nodeToRoadSegmentMap.get(node.id)?.push(roadSegment);
+  }
+
   await fetchDataInBoundingBox(bbox)
     .then((data) => {
       data.nodes.forEach((coord: Node) => {
@@ -116,7 +129,7 @@ async function main() {
           color: "#000000",
           weight: 1,
           radius: 1,
-        }).addTo(map);
+        }).addTo(map).bindTooltip(`Node: ${coord.id}`);
       });
 
       data.ways.forEach((way: Way) => {
@@ -128,10 +141,8 @@ async function main() {
           }
         });
 
-        if (way.tags.name && !SubAreasWithMeters.has(stripStreetName(way.tags.name))) {
-          // console.log("Skipping way with no meters: ", way.tags.name);
-          return;
-        }
+
+        const couldHaveMeters = !way.tags.name || SubAreasWithMeters.has(stripStreetName(way.tags.name));
 
         if (coords.length > 1 && way.tags.highway != 'footway' && way.tags.highway != 'service'
           && way.tags.highway != 'path' && way.tags.highway != 'cycleway') {
@@ -142,11 +153,18 @@ async function main() {
             .join('<br/>');
 
           for (let i = 0; i < coords.length - 1; i++) {
-            allRoadSegments.push({ way: way, p0: coords[i], p1: coords[i + 1] });
-            L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
-              color: "#00ff00",
-              weight: 4,
-            }).addTo(map).bindTooltip("#" + i + "->" + (i + 1) + tagString);
+            let roadSegment = { way: way, p0: coords[i], p1: coords[i + 1] };
+            if (couldHaveMeters) {
+              possibleMeterRoadSegments.push(roadSegment);
+              L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
+                color: "#00ff00",
+                weight: 4,
+              }).addTo(map).bindTooltip("#" + i + "->" + (i + 1) + tagString);
+            }
+
+            addNodeToRoadSegmentMap(coords[i], roadSegment);
+            addNodeToRoadSegmentMap(coords[i + 1], roadSegment);
+
           }
         }
       });
@@ -154,19 +172,19 @@ async function main() {
     .catch((error) => console.error(error));
 
   // Build a map of road segments by name
-  allRoadSegments.forEach((roadSegment) => {
+  possibleMeterRoadSegments.forEach((roadSegment) => {
     const name = stripStreetName(roadSegment.way.tags.name || "");
-    if (!roadSegmentsByName[name]) {
-      roadSegmentsByName[name] = [];
+    if (!possibleMeterRoadSegmentsByName[name]) {
+      possibleMeterRoadSegmentsByName[name] = [];
     }
-    roadSegmentsByName[name].push(roadSegment);
+    possibleMeterRoadSegmentsByName[name].push(roadSegment);
   });
 
-  console.log("Road segments by name: ", roadSegmentsByName);
 
+  const targetPole = "U949";  // for debugging purposes, leave empty if you want to see all meters
+  const meterRoadSegments = new Set<RoadSegment>();
 
-  const targetPole = "";  // for debugging purposes, leave empty if you want to see all meters
-
+  // find closest segments for each meter
   for (const targetMeter of meters) {
     if (targetPole.length > 0 && targetMeter.Pole !== targetPole) {
       continue;
@@ -174,7 +192,7 @@ async function main() {
     if (targetMeter && targetMeter.SubArea) {
       const targetSubArea = stripStreetName(targetMeter.SubArea);
       //console.log("Target subarea: ", targetSubArea);
-      const roadSegments = roadSegmentsByName[targetSubArea];
+      const roadSegments = possibleMeterRoadSegmentsByName[targetSubArea];
       //console.log("Road segments: ", roadSegments);
       if (roadSegments) {
         let closestSegment: RoadSegment | null = null;
@@ -193,7 +211,8 @@ async function main() {
 
           }
         });
-        if (centerOfSegment.latitude != 0 && closestDist < 100) {
+        if (closestSegment && centerOfSegment.latitude != 0 && closestDist < 100) {
+          meterRoadSegments.add(closestSegment);
           L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
             color: "#ff0000",
             weight: 4,
@@ -202,6 +221,55 @@ async function main() {
       }
     }
   }
+
+  const chainSegmentMap = new Map<RoadSegment, RoadSegmentChain>();
+  for (const segment of meterRoadSegments) {
+    if (chainSegmentMap.has(segment)) { // chain already exists
+      continue;
+    }
+    const chain = createRoadSegmentChain(segment, nodeToRoadSegmentMap);
+    chainSegmentMap.set(segment, chain);
+  }
+}
+
+function createRoadSegmentChain(segment: RoadSegment, nodeToRoadSegmentMap: Map<number, RoadSegment[]>): RoadSegmentChain {
+
+  // go backwards to start of chain
+  let startNode = segment.p0;
+  let currentNode = segment.p0;
+  while (true) {
+    let attachedSegments = nodeToRoadSegmentMap.get(currentNode.id);
+    if (attachedSegments?.length !== 2) {
+      console.log("Node has more than 2 segments", currentNode, attachedSegments);
+      break;
+    }
+
+    let result = attachedSegments.find((attachedSegment) => { // find the other segment
+      if (attachedSegment !== segment) {
+        if (attachedSegment.way.tags.name !== segment.way.tags.name) {
+          console.log("Different street name", attachedSegment.way.tags.name, segment.way.tags.name);
+          return false;
+        }
+        if (currentNode == attachedSegment.p0) {
+          console.log("Reversed segment-- this should not happen", currentNode, attachedSegment);
+          return false;
+        }
+        currentNode = attachedSegment.p0;
+        console.log("Found next segment", currentNode, attachedSegments);
+        return true;
+      }
+      return false;
+    });
+    if (!result) {
+      console.log("Could not find next segment", currentNode, attachedSegments);
+      break;
+    }
+  }
+
+  let chain = { segments: [] };
+  return chain;
+
+
 }
 
 main();
