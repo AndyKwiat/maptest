@@ -1,8 +1,7 @@
 import * as L from 'leaflet';
-import { getDistance, getDistanceFromLine, getRhumbLineBearing } from 'geolib';
+import { getDistance, getDistanceFromLine, getRhumbLineBearing, getCenter } from 'geolib';
 
 import IPSMeters from './ipsmeters.csv';
-
 
 
 interface Node {
@@ -20,18 +19,22 @@ interface Way {
   };
 }
 
-
-
+interface RoadSegment {
+  p0: Node;
+  p1: Node;
+  way: Way;
+}
 
 
 const starting_lat = 37.87; // hard-coded for now
 const starting_lng = -122.3;
-const bbox: [number, number][] = [
+const bbox: [number, number][] = [  // bounding box for Berkeley
   [37.895988598965666, -122.23663330078126],
   [37.84178360198902, -122.3052978515625],
 ];
 
-let allRoadSegments: [Node, Node][] = [];
+let allRoadSegments: RoadSegment[] = [];
+let roadSegmentsByName: { [key: string]: RoadSegment[] } = {};
 let parkingBlocks: { [key: string]: L.Polygon } = {};
 const meters = convertToObjectArray(IPSMeters);
 // build meters subarea map
@@ -90,7 +93,7 @@ const SubAreasWithMeters = new Set(
   )
 );
 
-console.log(SubAreasWithMeters);
+
 
 map.on("click", onMapClick);
 function onMapClick(e: L.LeafletMouseEvent) {
@@ -104,51 +107,109 @@ document.getElementById("make-blocks-button")?.addEventListener("click", onMakeB
 function toLatLon(node: Node): [number, number] {
   return [node.lat, node.lon];
 }
-
-fetchDataInBoundingBox(bbox)
-  .then((data) => {
-    data.nodes.forEach((coord: Node) => {
-      // L.circle([coord.lat, coord.lon], {
-      //   color: "#ffff00",
-      //   weight: 1,
-      //   radius: 3,
-      // }).addTo(map);
-    });
-
-    data.ways.forEach((way: Way) => {
-      let coords: Node[] = [];
-      way.nodes.forEach((nodeId) => {
-        const coord = data.nodes.find((coord: Node) => coord.id === nodeId);
-        if (coord) {
-          coords.push(coord);
-        }
+async function main() {
+  await fetchDataInBoundingBox(bbox)
+    .then((data) => {
+      data.nodes.forEach((coord: Node) => {
+        // L.circle([coord.lat, coord.lon], {
+        //   color: "#ffff00",
+        //   weight: 1,
+        //   radius: 3,
+        // }).addTo(map);
       });
 
-      if (way.tags.name && !SubAreasWithMeters.has(stripStreetName(way.tags.name))) {
-        // console.log("Skipping way with no meters: ", way.tags.name);
-        return;
-      }
+      data.ways.forEach((way: Way) => {
+        let coords: Node[] = [];
+        way.nodes.forEach((nodeId) => {
+          const coord = data.nodes.find((coord: Node) => coord.id === nodeId);
+          if (coord) {
+            coords.push(coord);
+          }
+        });
 
-      if (coords.length > 1 && way.tags.highway != 'footway' && way.tags.highway != 'service'
-        && way.tags.highway != 'path' && way.tags.highway != 'cycleway') {
-
-
-        let tagString = Object.entries(way.tags)
-          .map(([key, value]) => `${key}: ${value}`)
-          .join('<br/>');
-
-        for (let i = 0; i < coords.length - 1; i++) {
-          allRoadSegments.push([coords[i], coords[i + 1]]);
-          L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
-            color: "#00ff00",
-            weight: 4,
-          }).addTo(map).bindTooltip(tagString);
+        if (way.tags.name && !SubAreasWithMeters.has(stripStreetName(way.tags.name))) {
+          // console.log("Skipping way with no meters: ", way.tags.name);
+          return;
         }
-      }
-    });
-  })
-  .catch((error) => console.error(error));
 
+        if (coords.length > 1 && way.tags.highway != 'footway' && way.tags.highway != 'service'
+          && way.tags.highway != 'path' && way.tags.highway != 'cycleway') {
+
+
+          let tagString = Object.entries(way.tags)
+            .map(([key, value]) => `${key}: ${value}`)
+            .join('<br/>');
+
+          for (let i = 0; i < coords.length - 1; i++) {
+            allRoadSegments.push({ way: way, p0: coords[i], p1: coords[i + 1] });
+            L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
+              color: "#00ff00",
+              weight: 4,
+            }).addTo(map).bindTooltip(tagString);
+          }
+        }
+      });
+    })
+    .catch((error) => console.error(error));
+
+  // Build a map of road segments by name
+  allRoadSegments.forEach((roadSegment) => {
+    const name = stripStreetName(roadSegment.way.tags.name || "");
+    if (!roadSegmentsByName[name]) {
+      roadSegmentsByName[name] = [];
+    }
+    roadSegmentsByName[name].push(roadSegment);
+  });
+
+  console.log("Road segments by name: ", roadSegmentsByName);
+
+  interface coord {
+    latitude: number;
+    longitude: number;
+  }
+
+  const targetPole = "U1013";
+  // find meter with target pole
+  const targetMeter = meters.find(meter => meter.Pole === targetPole);
+  if (targetMeter) {
+    const targetSubArea = stripStreetName(targetMeter.SubArea);
+    console.log("Target subarea: ", targetSubArea);
+    const roadSegments = roadSegmentsByName[targetSubArea];
+    console.log("Road segments: ", roadSegments);
+    if (roadSegments) {
+      let closestSegment: RoadSegment | null = null;
+      let closestDist = -1;
+      let centerOfSegment: { latitude: number, longitude: number } = { latitude: 0, longitude: 0 };
+
+      roadSegments.forEach(roadSegment => {
+        let center = getCenter([roadSegment.p0, roadSegment.p1]);
+        if (center) {
+          const dist = getDistance(center, meterToGeoLib(targetMeter));
+          if (closestDist < 0 || dist < closestDist) {
+            closestDist = dist;
+            closestSegment = roadSegment;
+            centerOfSegment = center;
+          }
+
+        }
+      });
+      if (centerOfSegment.latitude != 0) {
+        L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
+          color: "#ff0000",
+          weight: 4,
+        }).addTo(map);
+      }
+    }
+  }
+}
+
+main();
+function meterToLatLon(meter: any): [number, number] {
+  return [parseFloat(meter.Latitude), parseFloat(meter.Longitude)];
+}
+function meterToGeoLib(meter: any) {
+  return { latitude: parseFloat(meter.Latitude), longitude: parseFloat(meter.Longitude) };
+}
 
 
 function onMakeBlocksButton_Clicked() {
@@ -159,43 +220,43 @@ function onMakeBlocksButton_Clicked() {
 
 }
 
-function addBlockForMeter(lat: number, lng: number) {
-  let meterLocation = { lng: lng, lat: lat };
+// function addBlockForMeter(lat: number, lng: number) {
+//   let meterLocation = { lng: lng, lat: lat };
 
-  let distanceToRoad = -1;
-  let closestRoad: [Node, Node] | null = null;
-  allRoadSegments.forEach((road) => {
-    let dist = getDistanceFromLine(meterLocation, road[0], road[1]);
-    if (distanceToRoad === -1 || dist < distanceToRoad) {
-      distanceToRoad = dist;
-      closestRoad = road;
-    }
-  });
-  if (closestRoad === null) {
-    return;
-  }
+//   let distanceToRoad = -1;
+//   let closestRoad: [Node, Node] | null = null;
+//   allRoadSegments.forEach((road) => {
+//     let dist = getDistanceFromLine(meterLocation, road[0], road[1]);
+//     if (distanceToRoad === -1 || dist < distanceToRoad) {
+//       distanceToRoad = dist;
+//       closestRoad = road;
+//     }
+//   });
+//   if (closestRoad === null) {
+//     return;
+//   }
 
-  let roadDirection = getRhumbLineBearing(closestRoad[0], closestRoad[1]);
-  let meterDirection = getRhumbLineBearing(closestRoad[0], meterLocation);
-  console.log("roadDirection: " + roadDirection + " meterDirection: " + meterDirection);
+//   let roadDirection = getRhumbLineBearing(closestRoad[0], closestRoad[1]);
+//   let meterDirection = getRhumbLineBearing(closestRoad[0], meterLocation);
+//   console.log("roadDirection: " + roadDirection + " meterDirection: " + meterDirection);
 
-  // const polygon = L.polygon(
-  //   [
-  //     convertVecToMap(start),
-  //     convertVecToMap(end),
-  //     convertVecToMap(end2),
-  //     convertVecToMap(start2),
-  //   ],
-  //   {
-  //     color: "#ff7800",
-  //     weight: 2,
-  //     fill: true,
-  //     fillColor: "#ff0000",
-  //     fillOpacity: 0.9,
-  //   }
-  // ).addTo(map);
-  // parkingBlocks[key] = polygon;
-}
+//   // const polygon = L.polygon(
+//   //   [
+//   //     convertVecToMap(start),
+//   //     convertVecToMap(end),
+//   //     convertVecToMap(end2),
+//   //     convertVecToMap(start2),
+//   //   ],
+//   //   {
+//   //     color: "#ff7800",
+//   //     weight: 2,
+//   //     fill: true,
+//   //     fillColor: "#ff0000",
+//   //     fillOpacity: 0.9,
+//   //   }
+//   // ).addTo(map);
+//   // parkingBlocks[key] = polygon;
+// }
 
 function fetchDataInBoundingBox(bbox: [number, number][]) {
   bbox.sort((a, b) => a[0] - b[0]);
