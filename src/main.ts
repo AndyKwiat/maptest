@@ -66,6 +66,7 @@ meters.forEach((meter: any) => {
   }).addTo(map).bindTooltip(`SubArea: ${meter.SubArea} Pole: ${meter.Pole}`);
 });
 function stripStreetName(input: string): string {
+  input = input.toUpperCase().replace("9TH", "NINTH");
   // List of street types to remove
   const streetTypes = [
     "STREET", "ST", "AVENUE", "AVE", "ROAD", "RD", "BOULEVARD", "BLVD",
@@ -74,7 +75,7 @@ function stripStreetName(input: string): string {
   ];
 
   // Convert to uppercase and remove numbers
-  let result = input.toUpperCase().replace(/\d+/g, "");
+  let result = input.replace(/\d+/g, "");
 
   // Remove street types
   streetTypes.forEach(type => {
@@ -163,41 +164,41 @@ async function main() {
 
   console.log("Road segments by name: ", roadSegmentsByName);
 
-  interface coord {
-    latitude: number;
-    longitude: number;
-  }
 
-  const targetPole = "U1013";
-  // find meter with target pole
-  const targetMeter = meters.find(meter => meter.Pole === targetPole);
-  if (targetMeter) {
-    const targetSubArea = stripStreetName(targetMeter.SubArea);
-    console.log("Target subarea: ", targetSubArea);
-    const roadSegments = roadSegmentsByName[targetSubArea];
-    console.log("Road segments: ", roadSegments);
-    if (roadSegments) {
-      let closestSegment: RoadSegment | null = null;
-      let closestDist = -1;
-      let centerOfSegment: { latitude: number, longitude: number } = { latitude: 0, longitude: 0 };
+  const targetPole = "";  // for debugging purposes, leave empty if you want to see all meters
 
-      roadSegments.forEach(roadSegment => {
-        let center = getCenter([roadSegment.p0, roadSegment.p1]);
-        if (center) {
-          const dist = getDistance(center, meterToGeoLib(targetMeter));
-          if (closestDist < 0 || dist < closestDist) {
-            closestDist = dist;
-            closestSegment = roadSegment;
-            centerOfSegment = center;
+  for (const targetMeter of meters) {
+    if (targetPole.length > 0 && targetMeter.Pole !== targetPole) {
+      continue;
+    }
+    if (targetMeter && targetMeter.SubArea) {
+      const targetSubArea = stripStreetName(targetMeter.SubArea);
+      //console.log("Target subarea: ", targetSubArea);
+      const roadSegments = roadSegmentsByName[targetSubArea];
+      //console.log("Road segments: ", roadSegments);
+      if (roadSegments) {
+        let closestSegment: RoadSegment | null = null;
+        let closestDist = -1;
+        let centerOfSegment: { latitude: number, longitude: number } = { latitude: 0, longitude: 0 };
+
+        roadSegments.forEach(roadSegment => {
+          let center = getCenter([roadSegment.p0, roadSegment.p1]);
+          if (center) {
+            const dist = getDistanceFromLine(meterToGeoLib(targetMeter), roadSegment.p0, roadSegment.p1);
+            if (closestDist < 0 || dist < closestDist) {
+              closestDist = dist;
+              closestSegment = roadSegment;
+              centerOfSegment = getCenter([roadSegment.p0, roadSegment.p1]) || centerOfSegment;
+            }
+
           }
-
+        });
+        if (centerOfSegment.latitude != 0) {
+          L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
+            color: "#ff0000",
+            weight: 4,
+          }).addTo(map);
         }
-      });
-      if (centerOfSegment.latitude != 0) {
-        L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
-          color: "#ff0000",
-          weight: 4,
-        }).addTo(map);
       }
     }
   }
