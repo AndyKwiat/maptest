@@ -12,6 +12,7 @@ interface Node {
 
 interface Way {
   nodes: number[];
+  id: number;
 
   tags: {
     highway?: string;
@@ -159,7 +160,7 @@ async function main() {
               L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
                 color: "#00ff00",
                 weight: 4,
-              }).addTo(map).bindTooltip("#" + i + "->" + (i + 1) + tagString);
+              }).addTo(map).bindTooltip(`#${i}->${(i + 1)}<br/>${way.id}<br/>` + tagString);
             }
 
             addNodeToRoadSegmentMap(coords[i], roadSegment);
@@ -228,15 +229,27 @@ async function main() {
       continue;
     }
     const chain = createRoadSegmentChain(segment, nodeToRoadSegmentMap);
+    console.log("Chain: ", chain);
     chainSegmentMap.set(segment, chain);
   }
 }
 
-function createRoadSegmentChain(segment: RoadSegment, nodeToRoadSegmentMap: Map<number, RoadSegment[]>): RoadSegmentChain {
+function createRoadSegmentChain(middleSegment: RoadSegment, nodeToRoadSegmentMap: Map<number, RoadSegment[]>): RoadSegmentChain {
 
   // go backwards to start of chain
-  let startNode = segment.p0;
-  let currentNode = segment.p0;
+  let backwardSegments = findEndOfChain(middleSegment.p0, middleSegment, true, nodeToRoadSegmentMap);
+  let startSegment = backwardSegments[backwardSegments.length - 1];
+  let startNode = startSegment.p1;
+  // now go forwards to end of chain
+  let segments = findEndOfChain(startNode, startSegment, false, nodeToRoadSegmentMap);
+  return { segments: segments };
+}
+
+function findEndOfChain(startNode: Node, startSegment: RoadSegment, traverseBackwards: boolean, nodeToRoadSegmentMap: Map<number, RoadSegment[]>) {
+  let currentNode = startNode;
+  let currentSegment = startSegment;
+  let segmentChain: RoadSegment[] = [currentSegment];
+
   while (true) {
     let attachedSegments = nodeToRoadSegmentMap.get(currentNode.id);
     if (attachedSegments?.length !== 2) {
@@ -245,16 +258,23 @@ function createRoadSegmentChain(segment: RoadSegment, nodeToRoadSegmentMap: Map<
     }
 
     let result = attachedSegments.find((attachedSegment) => { // find the other segment
-      if (attachedSegment !== segment) {
-        if (attachedSegment.way.tags.name !== segment.way.tags.name) {
-          console.log("Different street name", attachedSegment.way.tags.name, segment.way.tags.name);
+      if (attachedSegment !== currentSegment) {
+        if (attachedSegment.way.tags.name !== currentSegment.way.tags.name) {
+          console.log("Different street name", attachedSegment.way.tags.name, currentSegment.way.tags.name);
           return false;
         }
-        if (currentNode == attachedSegment.p0) {
+        let possibleNextNode = attachedSegment.p0;
+        if (!traverseBackwards) {
+          possibleNextNode = attachedSegment.p1;
+        }
+
+        if (currentNode == possibleNextNode) {
           console.log("Reversed segment-- this should not happen", currentNode, attachedSegment);
           return false;
         }
-        currentNode = attachedSegment.p0;
+        currentNode = possibleNextNode;
+        currentSegment = attachedSegment;
+        segmentChain.push(currentSegment);
         console.log("Found next segment", currentNode, attachedSegments);
         return true;
       }
@@ -264,12 +284,12 @@ function createRoadSegmentChain(segment: RoadSegment, nodeToRoadSegmentMap: Map<
       console.log("Could not find next segment", currentNode, attachedSegments);
       break;
     }
+    if (currentNode.id === startNode.id) {
+      console.log("Found start node-- probable cycle", currentNode, attachedSegments);
+      break;
+    }
   }
-
-  let chain = { segments: [] };
-  return chain;
-
-
+  return segmentChain;
 }
 
 main();
