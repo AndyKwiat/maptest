@@ -112,11 +112,11 @@ async function main() {
   await fetchDataInBoundingBox(bbox)
     .then((data) => {
       data.nodes.forEach((coord: Node) => {
-        // L.circle([coord.lat, coord.lon], {
-        //   color: "#ffff00",
-        //   weight: 1,
-        //   radius: 3,
-        // }).addTo(map);
+        L.circle([coord.lat, coord.lon], {
+          color: "#000000",
+          weight: 1,
+          radius: 1,
+        }).addTo(map);
       });
 
       data.ways.forEach((way: Way) => {
@@ -146,7 +146,7 @@ async function main() {
             L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
               color: "#00ff00",
               weight: 4,
-            }).addTo(map).bindTooltip(tagString);
+            }).addTo(map).bindTooltip("#" + i + "->" + (i + 1) + tagString);
           }
         }
       });
@@ -193,7 +193,7 @@ async function main() {
 
           }
         });
-        if (centerOfSegment.latitude != 0) {
+        if (centerOfSegment.latitude != 0 && closestDist < 100) {
           L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
             color: "#ff0000",
             weight: 4,
