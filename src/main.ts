@@ -1,5 +1,5 @@
 import * as L from 'leaflet';
-import { getDistance, getDistanceFromLine, getRhumbLineBearing, getCenter } from 'geolib';
+import { getDistance, getDistanceFromLine, getRhumbLineBearing, getCenter, computeDestinationPoint } from 'geolib';
 
 import IPSMeters from './ipsmeters.csv';
 
@@ -28,6 +28,23 @@ interface RoadSegment {
 
 interface RoadSegmentChain {
   segments: RoadSegment[];
+}
+
+const enum Parity {
+  EVEN,
+  ODD
+}
+const enum PerpendicularDirection {
+  CLOCKWISE,
+  COUNTERCLOCKWISE
+}
+interface Blockface {
+  roadSegmentChain: RoadSegmentChain;
+  sideOfStreetParity: Parity;
+  perpendicularOffset: number;
+  perpendicularDirection: PerpendicularDirection;
+  startOffset: number;
+  endOffset: number;
 }
 
 
@@ -114,6 +131,10 @@ document.getElementById("make-blocks-button")?.addEventListener("click", onMakeB
 function toLatLon(node: Node): [number, number] {
   return [node.lat, node.lon];
 }
+
+function toLatLonFromObject(obj: { latitude: number, longitude: number }): [number, number] {
+  return [obj.latitude, obj.longitude];
+}
 async function main() {
   const nodeToRoadSegmentMap = new Map<number, RoadSegment[]>();
   function addNodeToRoadSegmentMap(node: Node, roadSegment: RoadSegment) {
@@ -184,6 +205,7 @@ async function main() {
 
   const targetPole = "U949";  // for debugging purposes, leave empty if you want to see all meters
   const meterRoadSegments = new Set<RoadSegment>();
+  const meterSegmentPairs: [any, RoadSegment][] = [];
 
   // find closest segments for each meter
   for (const targetMeter of meters) {
@@ -214,6 +236,7 @@ async function main() {
         });
         if (closestSegment && centerOfSegment.latitude != 0 && closestDist < 100) {
           meterRoadSegments.add(closestSegment);
+          meterSegmentPairs.push([targetMeter, closestSegment]);
           L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
             color: "#ff0000",
             weight: 4,
@@ -223,6 +246,7 @@ async function main() {
     }
   }
 
+  // create road segment chains
   const chainSegmentMap = new Map<RoadSegment, RoadSegmentChain>();
   for (const segment of meterRoadSegments) {
     if (chainSegmentMap.has(segment)) { // chain already exists
@@ -232,6 +256,82 @@ async function main() {
     console.log("Chain: ", chain);
     chainSegmentMap.set(segment, chain);
   }
+
+  const blockfaces: Blockface[] = [];
+  // create blockfaces
+  for (const [meter, segment] of meterSegmentPairs) {
+    const poleName = meter.Pole;
+    // determine if pole name is even or odd based on last character in polename
+    const lastChar = poleName[poleName.length - 1];
+    const parity = lastChar % 2 == 0 ? Parity.EVEN : Parity.ODD;
+    const chain = chainSegmentMap.get(segment);
+    if (!chain) {
+      console.log("No chain for segment", segment);
+      continue;
+    }
+    // see if blockface exists with same chain and parity
+    const existingBlockface = blockfaces.find(blockface => blockface.roadSegmentChain === chain && blockface.sideOfStreetParity === parity);
+    if (existingBlockface) {
+      continue;
+    }
+    const roadBearing = getRhumbLineBearing(segment.p0, segment.p1);
+    const meterBearing = getRhumbLineBearing(segment.p0, meterToGeoLib(meter));
+    // Calculate the difference
+    let diff = meterBearing - roadBearing;
+
+    // Normalize the difference to be between -180 and 180
+    if (diff > 180) {
+      diff -= 360;
+    } else if (diff < -180) {
+      diff += 360;
+    }
+
+    // create new blockface
+    blockfaces.push({
+      roadSegmentChain: chain,
+      sideOfStreetParity: parity,
+      perpendicularDirection: diff > 0 ? PerpendicularDirection.CLOCKWISE : PerpendicularDirection.COUNTERCLOCKWISE,
+      perpendicularOffset: 3,
+      startOffset: 0,
+      endOffset: 0
+    });
+  }
+
+  drawBlockface(map, blockfaces[0]);
+
+}
+
+function drawBlockface(map: L.Map, blockface: Blockface) {
+  const segments = blockface.roadSegmentChain.segments;
+  const BLOCKFACE_WIDTH = 5;
+  const polyLineFront = [];
+  const polyLineBack = [];
+  const lastSegment = segments[segments.length - 1];
+  for (let segment of segments) {
+    const bearing = getRhumbLineBearing(segment.p0, segment.p1);
+    const perpendicularBearing = bearing + (blockface.perpendicularDirection === PerpendicularDirection.CLOCKWISE ? 90 : -90);
+    const perpendicularOffset = blockface.perpendicularOffset;
+    polyLineFront.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset, perpendicularBearing)));
+    polyLineBack.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
+    if (segment === lastSegment) {
+      polyLineFront.push(toLatLonFromObject(computeDestinationPoint(segment.p1, perpendicularOffset, perpendicularBearing)));
+      polyLineBack.push(toLatLonFromObject(computeDestinationPoint(segment.p1, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
+    }
+  }
+
+  // merge the two arrays with the back array reversed
+  const polyLine = polyLineFront.concat(polyLineBack.reverse());
+
+
+  L.polygon(polyLine, {
+    color: "#0000ff",
+    weight: 2,
+    fill: true,
+    fillColor: "#00ffff",
+    fillOpacity: 0.8,
+  }).addTo(map);
+
+
 }
 
 function createRoadSegmentChain(middleSegment: RoadSegment, nodeToRoadSegmentMap: Map<number, RoadSegment[]>): RoadSegmentChain {
@@ -253,7 +353,7 @@ function findEndOfChain(startNode: Node, startSegment: RoadSegment, traverseBack
   while (true) {
     let attachedSegments = nodeToRoadSegmentMap.get(currentNode.id);
     if (attachedSegments?.length !== 2) {
-      console.log("Node has more than 2 segments", currentNode, attachedSegments);
+      // console.log("Node has more than 2 segments", currentNode, attachedSegments);
       break;
     }
 
@@ -275,7 +375,7 @@ function findEndOfChain(startNode: Node, startSegment: RoadSegment, traverseBack
         currentNode = possibleNextNode;
         currentSegment = attachedSegment;
         segmentChain.push(currentSegment);
-        console.log("Found next segment", currentNode, attachedSegments);
+        // console.log("Found next segment", currentNode, attachedSegments);
         return true;
       }
       return false;
