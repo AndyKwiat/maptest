@@ -147,11 +147,11 @@ async function main() {
   await fetchDataInBoundingBox(bbox)
     .then((data) => {
       data.nodes.forEach((coord: Node) => {
-        L.circle([coord.lat, coord.lon], {
-          color: "#000000",
-          weight: 1,
-          radius: 1,
-        }).addTo(map).bindTooltip(`Node: ${coord.id}`);
+        // L.circle([coord.lat, coord.lon], {
+        //   color: "#000000",
+        //   weight: 1,
+        //   radius: 1,
+        // }).addTo(map).bindTooltip(`Node: ${coord.id}`);
       });
 
       data.ways.forEach((way: Way) => {
@@ -178,10 +178,10 @@ async function main() {
             let roadSegment = { way: way, p0: coords[i], p1: coords[i + 1] };
             if (couldHaveMeters) {
               possibleMeterRoadSegments.push(roadSegment);
-              L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
-                color: "#00ff00",
-                weight: 4,
-              }).addTo(map).bindTooltip(`#${i}->${(i + 1)}<br/>${way.id}<br/>` + tagString);
+              // L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
+              //   color: "#00ff00",
+              //   weight: 4,
+              // }).addTo(map).bindTooltip(`#${i}->${(i + 1)}<br/>${way.id}<br/>` + tagString);
             }
 
             addNodeToRoadSegmentMap(coords[i], roadSegment);
@@ -203,7 +203,7 @@ async function main() {
   });
 
 
-  const targetPole = "U949";  // for debugging purposes, leave empty if you want to see all meters
+  const targetPole = "";  // for debugging purposes, leave empty if you want to see all meters
   const meterRoadSegments = new Set<RoadSegment>();
   const meterSegmentPairs: [any, RoadSegment][] = [];
 
@@ -237,10 +237,10 @@ async function main() {
         if (closestSegment && centerOfSegment.latitude != 0 && closestDist < 100) {
           meterRoadSegments.add(closestSegment);
           meterSegmentPairs.push([targetMeter, closestSegment]);
-          L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
-            color: "#ff0000",
-            weight: 4,
-          }).addTo(map);
+          // L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
+          //   color: "#ff0000",
+          //   weight: 4,
+          // }).addTo(map);
         }
       }
     }
@@ -292,12 +292,14 @@ async function main() {
       sideOfStreetParity: parity,
       perpendicularDirection: diff > 0 ? PerpendicularDirection.CLOCKWISE : PerpendicularDirection.COUNTERCLOCKWISE,
       perpendicularOffset: 3,
-      startOffset: 0,
-      endOffset: 0
+      startOffset: 8,
+      endOffset: 8
     });
   }
 
-  drawBlockface(map, blockfaces[0]);
+  for (const blockface of blockfaces) {
+    drawBlockface(map, blockface);
+  }
 
 }
 
@@ -307,16 +309,53 @@ function drawBlockface(map: L.Map, blockface: Blockface) {
   const polyLineFront = [];
   const polyLineBack = [];
   const lastSegment = segments[segments.length - 1];
+  let startOffset = blockface.startOffset;
+  let endOffset = blockface.endOffset;
+  let totalDistance = 0;
+  for (let segment of segments) {
+    totalDistance += getDistance(segment.p0, segment.p1);
+  }
+  if (totalDistance < startOffset + endOffset) {
+    console.log("Blockface too short", totalDistance, startOffset, endOffset);
+    return;
+  }
+  let distanceDrawn = 0;
+
   for (let segment of segments) {
     const bearing = getRhumbLineBearing(segment.p0, segment.p1);
     const perpendicularBearing = bearing + (blockface.perpendicularDirection === PerpendicularDirection.CLOCKWISE ? 90 : -90);
     const perpendicularOffset = blockface.perpendicularOffset;
-    polyLineFront.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset, perpendicularBearing)));
-    polyLineBack.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
-    if (segment === lastSegment) {
-      polyLineFront.push(toLatLonFromObject(computeDestinationPoint(segment.p1, perpendicularOffset, perpendicularBearing)));
-      polyLineBack.push(toLatLonFromObject(computeDestinationPoint(segment.p1, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
+    const segmentLength = getDistance(segment.p0, segment.p1);
+    console.log("Segment length: ", segmentLength);
+    if (distanceDrawn + segmentLength < startOffset) {
+      console.log("Skipping segment", distanceDrawn, segmentLength, startOffset);
+      distanceDrawn += segmentLength;
+      continue;
     }
+    if (distanceDrawn < startOffset) {
+
+      const startFraction = (startOffset - distanceDrawn) / segmentLength;
+      console.log("Drawing partial start", startFraction);
+      const startPt = computeDestinationPoint(segment.p0, startFraction * segmentLength, bearing);
+      polyLineFront.push(toLatLonFromObject(computeDestinationPoint(startPt, perpendicularOffset, perpendicularBearing)));
+      polyLineBack.push(toLatLonFromObject(computeDestinationPoint(startPt, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
+    } else {
+
+      console.log("Drawing p0");
+      polyLineFront.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset, perpendicularBearing)));
+      polyLineBack.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
+    }
+
+    if (distanceDrawn + segmentLength > totalDistance - endOffset) {
+      console.log("Drawing partial end", distanceDrawn, segmentLength, totalDistance, endOffset);
+      const endFraction = (totalDistance - endOffset - distanceDrawn) / segmentLength;
+      const endPt = computeDestinationPoint(segment.p0, endFraction * segmentLength, bearing);
+      polyLineFront.push(toLatLonFromObject(computeDestinationPoint(endPt, perpendicularOffset, perpendicularBearing)));
+      polyLineBack.push(toLatLonFromObject(computeDestinationPoint(endPt, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
+      break;
+    }
+    distanceDrawn += segmentLength;
+
   }
 
   // merge the two arrays with the back array reversed
