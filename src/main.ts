@@ -89,7 +89,9 @@ meters.forEach((meter: any) => {
   }).addTo(map).bindTooltip(`SubArea: ${meter.SubArea} Pole: ${meter.Pole}`);
 });
 function stripStreetName(input: string): string {
-  input = input.toUpperCase().replace("9TH", "NINTH");
+  input = input.toUpperCase();
+  input = input.replace("9TH", "NINTH");
+  input = input.replace("- GB", "");
   // List of street types to remove
   const streetTypes = [
     "STREET", "ST", "AVENUE", "AVE", "ROAD", "RD", "BOULEVARD", "BLVD",
@@ -165,10 +167,9 @@ async function main() {
 
 
         const couldHaveMeters = !way.tags.name || SubAreasWithMeters.has(stripStreetName(way.tags.name));
+        const excludedHighways = ['footway', 'service', 'path', 'cycleway', 'steps', 'pedestrian', 'corridor']; //, 'track', 'bridleway', 'corridor', 'elevator', 'escalator', 'proposed', 'construction', 'bus_guideway', 'raceway', 'rest_area', 'services', 'unclassified', 'residential', 'living_street', 'tertiary', 'secondary', 'primary', 'trunk', 'motorway', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link', 'road', 'crossing', 'platform', 'path', 'cycleway', 'footway', 'bridleway', 'steps', 'pedestrian', 'track', 'corridor', 'elevator', 'escalator', 'proposed', 'construction'];
 
-        if (coords.length > 1 && way.tags.highway != 'footway' && way.tags.highway != 'service'
-          && way.tags.highway != 'path' && way.tags.highway != 'cycleway') {
-
+        if (coords.length > 1 && way.tags.highway && !excludedHighways.includes(way.tags.highway)) {
 
           let tagString = Object.entries(way.tags)
             .map(([key, value]) => `${key}: ${value}`)
@@ -178,10 +179,10 @@ async function main() {
             let roadSegment = { way: way, p0: coords[i], p1: coords[i + 1] };
             if (couldHaveMeters) {
               possibleMeterRoadSegments.push(roadSegment);
-              // L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
-              //   color: "#00ff00",
-              //   weight: 4,
-              // }).addTo(map).bindTooltip(`#${i}->${(i + 1)}<br/>${way.id}<br/>` + tagString);
+              L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
+                color: "#00ff00",
+                weight: 4,
+              }).addTo(map).bindTooltip(`#${i}->${(i + 1)}<br/>${way.id}<br/>` + tagString);
             }
 
             addNodeToRoadSegmentMap(coords[i], roadSegment);
@@ -237,10 +238,10 @@ async function main() {
         if (closestSegment && centerOfSegment.latitude != 0 && closestDist < 100) {
           meterRoadSegments.add(closestSegment);
           meterSegmentPairs.push([targetMeter, closestSegment]);
-          // L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
-          //   color: "#ff0000",
-          //   weight: 4,
-          // }).addTo(map);
+          L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
+            color: "#ff0000",
+            weight: 4,
+          }).addTo(map);
         }
       }
     }
