@@ -91,7 +91,7 @@ meters.forEach((meter: any) => {
 function stripStreetName(input: string): string {
   input = input.toUpperCase();
   input = input.replace("9TH", "NINTH");
-  input = input.replace("- GB", "");
+  input = input.replace("- GB", "").replace("MS1", "");
   // List of street types to remove
   const streetTypes = [
     "STREET", "ST", "AVENUE", "AVE", "ROAD", "RD", "BOULEVARD", "BLVD",
@@ -149,12 +149,14 @@ async function main() {
   await fetchDataInBoundingBox(bbox)
     .then((data) => {
       data.nodes.forEach((coord: Node) => {
-        // L.circle([coord.lat, coord.lon], {
-        //   color: "#000000",
-        //   weight: 1,
-        //   radius: 1,
-        // }).addTo(map).bindTooltip(`Node: ${coord.id}`);
+        L.circle([coord.lat, coord.lon], {
+          color: "#000000",
+          weight: 1,
+          radius: 1,
+        }).addTo(map).bindTooltip(`Node: ${coord.id}`);
       });
+
+      console.log("Data: ", data);
 
       data.ways.forEach((way: Way) => {
         let coords: Node[] = [];
@@ -167,9 +169,12 @@ async function main() {
 
 
         const couldHaveMeters = !way.tags.name || SubAreasWithMeters.has(stripStreetName(way.tags.name));
-        const excludedHighways = ['footway', 'service', 'path', 'cycleway', 'steps', 'pedestrian', 'corridor']; //, 'track', 'bridleway', 'corridor', 'elevator', 'escalator', 'proposed', 'construction', 'bus_guideway', 'raceway', 'rest_area', 'services', 'unclassified', 'residential', 'living_street', 'tertiary', 'secondary', 'primary', 'trunk', 'motorway', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link', 'road', 'crossing', 'platform', 'path', 'cycleway', 'footway', 'bridleway', 'steps', 'pedestrian', 'track', 'corridor', 'elevator', 'escalator', 'proposed', 'construction'];
+        // const excludedHighways = ['footway', 'service', 'path', 'cycleway', 'steps', 'pedestrian', 'corridor']; //, 'track', 'bridleway', 'corridor', 'elevator', 'escalator', 'proposed', 'construction', 'bus_guideway', 'raceway', 'rest_area', 'services', 'unclassified', 'residential', 'living_street', 'tertiary', 'secondary', 'primary', 'trunk', 'motorway', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link', 'road', 'crossing', 'platform', 'path', 'cycleway', 'footway', 'bridleway', 'steps', 'pedestrian', 'track', 'corridor', 'elevator', 'escalator', 'proposed', 'construction'];
+        const excludedHighways = ['test'];
 
-        if (coords.length > 1 && way.tags.highway && !excludedHighways.includes(way.tags.highway)) {
+        if (coords.length > 1
+          && way.tags.highway && !excludedHighways.includes(way.tags.highway)
+        ) {
 
           let tagString = Object.entries(way.tags)
             .map(([key, value]) => `${key}: ${value}`)
@@ -238,10 +243,11 @@ async function main() {
         if (closestSegment && centerOfSegment.latitude != 0 && closestDist < 100) {
           meterRoadSegments.add(closestSegment);
           meterSegmentPairs.push([targetMeter, closestSegment]);
-          L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
-            color: "#ff0000",
-            weight: 4,
-          }).addTo(map);
+
+          // L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
+          //   color: "#ff0000",
+          //   weight: 4,
+          // }).addTo(map);
         }
       }
     }
@@ -317,7 +323,7 @@ function drawBlockface(map: L.Map, blockface: Blockface) {
     totalDistance += getDistance(segment.p0, segment.p1);
   }
   if (totalDistance < startOffset + endOffset) {
-    console.log("Blockface too short", totalDistance, startOffset, endOffset);
+    // console.log("Blockface too short", totalDistance, startOffset, endOffset);
     return;
   }
   let distanceDrawn = 0;
@@ -327,28 +333,28 @@ function drawBlockface(map: L.Map, blockface: Blockface) {
     const perpendicularBearing = bearing + (blockface.perpendicularDirection === PerpendicularDirection.CLOCKWISE ? 90 : -90);
     const perpendicularOffset = blockface.perpendicularOffset;
     const segmentLength = getDistance(segment.p0, segment.p1);
-    console.log("Segment length: ", segmentLength);
+    // console.log("Segment length: ", segmentLength);
     if (distanceDrawn + segmentLength < startOffset) {
-      console.log("Skipping segment", distanceDrawn, segmentLength, startOffset);
+      // console.log("Skipping segment", distanceDrawn, segmentLength, startOffset);
       distanceDrawn += segmentLength;
       continue;
     }
     if (distanceDrawn < startOffset) {
 
       const startFraction = (startOffset - distanceDrawn) / segmentLength;
-      console.log("Drawing partial start", startFraction);
+      // console.log("Drawing partial start", startFraction);
       const startPt = computeDestinationPoint(segment.p0, startFraction * segmentLength, bearing);
       polyLineFront.push(toLatLonFromObject(computeDestinationPoint(startPt, perpendicularOffset, perpendicularBearing)));
       polyLineBack.push(toLatLonFromObject(computeDestinationPoint(startPt, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
     } else {
 
-      console.log("Drawing p0");
+      // console.log("Drawing p0");
       polyLineFront.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset, perpendicularBearing)));
       polyLineBack.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
     }
 
     if (distanceDrawn + segmentLength > totalDistance - endOffset) {
-      console.log("Drawing partial end", distanceDrawn, segmentLength, totalDistance, endOffset);
+      // console.log("Drawing partial end", distanceDrawn, segmentLength, totalDistance, endOffset);
       const endFraction = (totalDistance - endOffset - distanceDrawn) / segmentLength;
       const endPt = computeDestinationPoint(segment.p0, endFraction * segmentLength, bearing);
       polyLineFront.push(toLatLonFromObject(computeDestinationPoint(endPt, perpendicularOffset, perpendicularBearing)));
@@ -449,43 +455,7 @@ function onMakeBlocksButton_Clicked() {
 
 }
 
-// function addBlockForMeter(lat: number, lng: number) {
-//   let meterLocation = { lng: lng, lat: lat };
 
-//   let distanceToRoad = -1;
-//   let closestRoad: [Node, Node] | null = null;
-//   allRoadSegments.forEach((road) => {
-//     let dist = getDistanceFromLine(meterLocation, road[0], road[1]);
-//     if (distanceToRoad === -1 || dist < distanceToRoad) {
-//       distanceToRoad = dist;
-//       closestRoad = road;
-//     }
-//   });
-//   if (closestRoad === null) {
-//     return;
-//   }
-
-//   let roadDirection = getRhumbLineBearing(closestRoad[0], closestRoad[1]);
-//   let meterDirection = getRhumbLineBearing(closestRoad[0], meterLocation);
-//   console.log("roadDirection: " + roadDirection + " meterDirection: " + meterDirection);
-
-//   // const polygon = L.polygon(
-//   //   [
-//   //     convertVecToMap(start),
-//   //     convertVecToMap(end),
-//   //     convertVecToMap(end2),
-//   //     convertVecToMap(start2),
-//   //   ],
-//   //   {
-//   //     color: "#ff7800",
-//   //     weight: 2,
-//   //     fill: true,
-//   //     fillColor: "#ff0000",
-//   //     fillOpacity: 0.9,
-//   //   }
-//   // ).addTo(map);
-//   // parkingBlocks[key] = polygon;
-// }
 
 function fetchDataInBoundingBox(bbox: [number, number][]) {
   bbox.sort((a, b) => a[0] - b[0]);
