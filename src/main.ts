@@ -103,7 +103,7 @@ async function main() {
       drawNodes(data.nodes);
 
 
-      console.log("Data: ", data);
+      // console.log("Data: ", data);
 
       statusLog("calculating road segments");
       data.ways.forEach((way: Way) => {
@@ -208,7 +208,7 @@ async function main() {
       continue;
     }
     const chain = createRoadSegmentChain(segment, nodeToRoadSegmentMap);
-    console.log("Chain: ", chain);
+    //console.log("Chain: ", chain);
     chainSegmentMap.set(segment, chain);
   }
 

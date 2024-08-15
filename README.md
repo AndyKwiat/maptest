@@ -27,3 +27,10 @@ offset, startPos, endPos
 srugery: 
 break at  certain segment
 
+TODO:
+- associate meters w/ blockfaces ---> get human readable blockface name
+- bug: durant & college -- drawing
+- look at reported bugs in console
+- look at CSV exporter
+
+
