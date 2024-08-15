@@ -148,7 +148,8 @@ function drawBlockface(layer: L.LayerGroup, blockface: Blockface) {
         fill: true,
         fillColor: "#00ffff",
         fillOpacity: 0.8,
-    }).addTo(layer);
+    }).addTo(layer).bindTooltip(`Blockface- Street: ${blockface.roadSegmentChain.segments[0].way.tags.name}<br/> 
+        Parity: ${blockface.sideOfStreetParity === 0 ? "EVEN" : "ODD"}<br/>`);
 
 
 }
