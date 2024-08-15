@@ -8,7 +8,7 @@ import {
 } from './gfx';
 
 import { RoadSegment, RoadSegmentChain, Parity, PerpendicularDirection, Node, Blockface, Way } from './types';
-import { toLatLon } from './utils';
+import { statusLog, toLatLon } from './utils';
 
 
 
@@ -16,11 +16,13 @@ const bbox: [number, number][] = [  // bounding box for Berkeley
   [37.895988598965666, -122.23663330078126],
   [37.84178360198902, -122.3052978515625],
 ];
+statusLog("setting up map");
 setupMap();
 
 let possibleMeterRoadSegments: RoadSegment[] = [];
 let possibleMeterRoadSegmentsByName: { [key: string]: RoadSegment[] } = {};
 
+statusLog("adding meters");
 const meters = convertToObjectArray(IPSMeters);
 drawMeters(meters);
 
@@ -85,6 +87,7 @@ document.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
 
 
 async function main() {
+
   const nodeToRoadSegmentMap = new Map<number, RoadSegment[]>();
   function addNodeToRoadSegmentMap(node: Node, roadSegment: RoadSegment) {
     if (!nodeToRoadSegmentMap.has(node.id)) {
@@ -93,13 +96,16 @@ async function main() {
     nodeToRoadSegmentMap.get(node.id)?.push(roadSegment);
   }
 
+  statusLog("fetching open street map data");
   await fetchDataInBoundingBox(bbox)
     .then((data) => {
+      statusLog("drawing nodes");
       drawNodes(data.nodes);
 
 
       console.log("Data: ", data);
 
+      statusLog("calculating road segments");
       data.ways.forEach((way: Way) => {
         let coords: Node[] = [];
         way.nodes.forEach((nodeId) => {
@@ -153,6 +159,7 @@ async function main() {
   const meterRoadSegments = new Set<RoadSegment>();
   const meterSegmentPairs: [any, RoadSegment][] = [];
 
+  statusLog("finding closest road segments to each meter");
   // find closest segments for each meter
   for (const targetMeter of meters) {
     if (targetPole.length > 0 && targetMeter.Pole !== targetPole) {
@@ -193,6 +200,7 @@ async function main() {
     }
   }
 
+  statusLog("creating road segment chains");
   // create road segment chains
   const chainSegmentMap = new Map<RoadSegment, RoadSegmentChain>();
   for (const segment of meterRoadSegments) {
@@ -204,6 +212,7 @@ async function main() {
     chainSegmentMap.set(segment, chain);
   }
 
+  statusLog("creating blockfaces");
   const blockfaces: Blockface[] = [];
   // create blockfaces
   for (const [meter, segment] of meterSegmentPairs) {
@@ -245,7 +254,7 @@ async function main() {
   }
 
   drawBlockfaces(blockfaces);
-
+  statusLog("done");
 
 }
 
@@ -308,6 +317,7 @@ function findEndOfChain(startNode: Node, startSegment: RoadSegment, traverseBack
 }
 
 main();
+
 function meterToLatLon(meter: any): [number, number] {
   return [parseFloat(meter.Latitude), parseFloat(meter.Longitude)];
 }
