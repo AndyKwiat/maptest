@@ -1,97 +1,33 @@
-import * as L from 'leaflet';
+
 import { getDistance, getDistanceFromLine, getRhumbLineBearing, getCenter, computeDestinationPoint } from 'geolib';
 
 import IPSMeters from './ipsmeters.csv';
+import {
+  drawMeters, drawNodes, drawRoadSegments, drawBlockfaces, setupMap,
+  showNodes, hideNodes, showRoadSegments, hideRoadSegments, showBlockfaces, hideBlockfaces, showMeters, hideMeters
+} from './gfx';
 
-
-interface Node {
-  id: number;
-  lat: number;
-  lon: number;
-}
-
-interface Way {
-  nodes: number[];
-  id: number;
-
-  tags: {
-    highway?: string;
-    name?: string;
-  };
-}
-
-interface RoadSegment {
-  p0: Node;
-  p1: Node;
-  way: Way;
-}
-
-interface RoadSegmentChain {
-  segments: RoadSegment[];
-}
-
-const enum Parity {
-  EVEN,
-  ODD
-}
-const enum PerpendicularDirection {
-  CLOCKWISE,
-  COUNTERCLOCKWISE
-}
-interface Blockface {
-  roadSegmentChain: RoadSegmentChain;
-  sideOfStreetParity: Parity;
-  perpendicularOffset: number;
-  perpendicularDirection: PerpendicularDirection;
-  startOffset: number;
-  endOffset: number;
-}
+import { RoadSegment, RoadSegmentChain, Parity, PerpendicularDirection, Node, Blockface, Way } from './types';
+import { toLatLon } from './utils';
 
 
 
-const starting_lat = 37.87; // hard-coded for now
-const starting_lng = -122.3;
 const bbox: [number, number][] = [  // bounding box for Berkeley
   [37.895988598965666, -122.23663330078126],
   [37.84178360198902, -122.3052978515625],
 ];
+setupMap();
 
 let possibleMeterRoadSegments: RoadSegment[] = [];
 let possibleMeterRoadSegmentsByName: { [key: string]: RoadSegment[] } = {};
-let parkingBlocks: { [key: string]: L.Polygon } = {};
+
 const meters = convertToObjectArray(IPSMeters);
-// build meters subarea map
+drawMeters(meters);
 
-
-const map = L.map("map", { attributionControl: false }).setView([starting_lat, starting_lng], 17);
-// Try to load the saved position
-
-const savedPosition = loadMapPosition();
-if (savedPosition) {
-  map.setView([savedPosition.lat, savedPosition.lng], savedPosition.zoom);
-}
-map.on('moveend', () => saveMapPosition(map));
-
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 99,
-  attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-}).addTo(map);
-
-meters.forEach((meter: any) => {
-  if (!meter.Latitude || !meter.Longitude) {
-    console.log("Skipping meter with missing lat/long: ", meter);
-    return;
-  }
-  L.circle([meter.Latitude, meter.Longitude], {
-    color: "#ff7800",
-    weight: 1,
-    radius: 2,
-  }).addTo(map).bindTooltip(`SubArea: ${meter.SubArea} Pole: ${meter.Pole}`);
-});
 function stripStreetName(input: string): string {
   input = input.toUpperCase();
   input = input.replace("9TH", "NINTH");
-  input = input.replace("- GB", "").replace("MS1", "");
+  input = input.replace("- GB", "").replace("MS1", "").replace(" GB", "");
   // List of street types to remove
   const streetTypes = [
     "STREET", "ST", "AVENUE", "AVE", "ROAD", "RD", "BOULEVARD", "BLVD",
@@ -120,23 +56,34 @@ const SubAreasWithMeters = new Set(
 );
 
 
+// General handler for all checkboxes
+function checkboxHandler(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const isChecked = target.checked;
 
-map.on("click", onMapClick);
-function onMapClick(e: L.LeafletMouseEvent) {
-  // addBlockForMeter(e.latlng.lat, e.latlng.lng);
-  // show current bounding box in console
-  console.log(map.getBounds().toBBoxString());
+  switch (target.value) {
+    case "Nodes":
+      isChecked ? showNodes() : hideNodes();
+      break;
+    case "RoadSegments":
+      isChecked ? showRoadSegments() : hideRoadSegments();
+      break;
+    case "Meters":
+      isChecked ? showMeters() : hideMeters();
+      break;
+    case "Blockfaces":
+      isChecked ? showBlockfaces() : hideBlockfaces();
+      break;
+  }
 }
 
-document.getElementById("make-blocks-button")?.addEventListener("click", onMakeBlocksButton_Clicked);
+// Attach the handler to all checkboxes
+document.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+  checkbox.addEventListener("change", checkboxHandler);
+});
 
-function toLatLon(node: Node): [number, number] {
-  return [node.lat, node.lon];
-}
 
-function toLatLonFromObject(obj: { latitude: number, longitude: number }): [number, number] {
-  return [obj.latitude, obj.longitude];
-}
+
 async function main() {
   const nodeToRoadSegmentMap = new Map<number, RoadSegment[]>();
   function addNodeToRoadSegmentMap(node: Node, roadSegment: RoadSegment) {
@@ -148,13 +95,8 @@ async function main() {
 
   await fetchDataInBoundingBox(bbox)
     .then((data) => {
-      data.nodes.forEach((coord: Node) => {
-        L.circle([coord.lat, coord.lon], {
-          color: "#000000",
-          weight: 1,
-          radius: 1,
-        }).addTo(map).bindTooltip(`Node: ${coord.id}`);
-      });
+      drawNodes(data.nodes);
+
 
       console.log("Data: ", data);
 
@@ -169,8 +111,8 @@ async function main() {
 
 
         const couldHaveMeters = !way.tags.name || SubAreasWithMeters.has(stripStreetName(way.tags.name));
-        // const excludedHighways = ['footway', 'service', 'path', 'cycleway', 'steps', 'pedestrian', 'corridor']; //, 'track', 'bridleway', 'corridor', 'elevator', 'escalator', 'proposed', 'construction', 'bus_guideway', 'raceway', 'rest_area', 'services', 'unclassified', 'residential', 'living_street', 'tertiary', 'secondary', 'primary', 'trunk', 'motorway', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link', 'road', 'crossing', 'platform', 'path', 'cycleway', 'footway', 'bridleway', 'steps', 'pedestrian', 'track', 'corridor', 'elevator', 'escalator', 'proposed', 'construction'];
-        const excludedHighways = ['test'];
+        const excludedHighways = ['footway', 'service', 'path', 'cycleway', 'steps', 'pedestrian', 'corridor']; //, 'track', 'bridleway', 'corridor', 'elevator', 'escalator', 'proposed', 'construction', 'bus_guideway', 'raceway', 'rest_area', 'services', 'unclassified', 'residential', 'living_street', 'tertiary', 'secondary', 'primary', 'trunk', 'motorway', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link', 'road', 'crossing', 'platform', 'path', 'cycleway', 'footway', 'bridleway', 'steps', 'pedestrian', 'track', 'corridor', 'elevator', 'escalator', 'proposed', 'construction'];
+        //const excludedHighways = ['test'];
 
         if (coords.length > 1
           && way.tags.highway && !excludedHighways.includes(way.tags.highway)
@@ -181,13 +123,9 @@ async function main() {
             .join('<br/>');
 
           for (let i = 0; i < coords.length - 1; i++) {
-            let roadSegment = { way: way, p0: coords[i], p1: coords[i + 1] };
+            let roadSegment = { way: way, p0: coords[i], p1: coords[i + 1], nodeIndex: i };
             if (couldHaveMeters) {
               possibleMeterRoadSegments.push(roadSegment);
-              L.polyline([toLatLon(coords[i]), toLatLon(coords[i + 1])], {
-                color: "#00ff00",
-                weight: 4,
-              }).addTo(map).bindTooltip(`#${i}->${(i + 1)}<br/>${way.id}<br/>` + tagString);
             }
 
             addNodeToRoadSegmentMap(coords[i], roadSegment);
@@ -198,6 +136,8 @@ async function main() {
       });
     })
     .catch((error) => console.error(error));
+
+  drawRoadSegments(possibleMeterRoadSegments);
 
   // Build a map of road segments by name
   possibleMeterRoadSegments.forEach((roadSegment) => {
@@ -304,78 +244,7 @@ async function main() {
     });
   }
 
-  for (const blockface of blockfaces) {
-    drawBlockface(map, blockface);
-  }
-
-}
-
-function drawBlockface(map: L.Map, blockface: Blockface) {
-  const segments = blockface.roadSegmentChain.segments;
-  const BLOCKFACE_WIDTH = 5;
-  const polyLineFront = [];
-  const polyLineBack = [];
-  const lastSegment = segments[segments.length - 1];
-  let startOffset = blockface.startOffset;
-  let endOffset = blockface.endOffset;
-  let totalDistance = 0;
-  for (let segment of segments) {
-    totalDistance += getDistance(segment.p0, segment.p1);
-  }
-  if (totalDistance < startOffset + endOffset) {
-    // console.log("Blockface too short", totalDistance, startOffset, endOffset);
-    return;
-  }
-  let distanceDrawn = 0;
-
-  for (let segment of segments) {
-    const bearing = getRhumbLineBearing(segment.p0, segment.p1);
-    const perpendicularBearing = bearing + (blockface.perpendicularDirection === PerpendicularDirection.CLOCKWISE ? 90 : -90);
-    const perpendicularOffset = blockface.perpendicularOffset;
-    const segmentLength = getDistance(segment.p0, segment.p1);
-    // console.log("Segment length: ", segmentLength);
-    if (distanceDrawn + segmentLength < startOffset) {
-      // console.log("Skipping segment", distanceDrawn, segmentLength, startOffset);
-      distanceDrawn += segmentLength;
-      continue;
-    }
-    if (distanceDrawn < startOffset) {
-
-      const startFraction = (startOffset - distanceDrawn) / segmentLength;
-      // console.log("Drawing partial start", startFraction);
-      const startPt = computeDestinationPoint(segment.p0, startFraction * segmentLength, bearing);
-      polyLineFront.push(toLatLonFromObject(computeDestinationPoint(startPt, perpendicularOffset, perpendicularBearing)));
-      polyLineBack.push(toLatLonFromObject(computeDestinationPoint(startPt, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
-    } else {
-
-      // console.log("Drawing p0");
-      polyLineFront.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset, perpendicularBearing)));
-      polyLineBack.push(toLatLonFromObject(computeDestinationPoint(segment.p0, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
-    }
-
-    if (distanceDrawn + segmentLength > totalDistance - endOffset) {
-      // console.log("Drawing partial end", distanceDrawn, segmentLength, totalDistance, endOffset);
-      const endFraction = (totalDistance - endOffset - distanceDrawn) / segmentLength;
-      const endPt = computeDestinationPoint(segment.p0, endFraction * segmentLength, bearing);
-      polyLineFront.push(toLatLonFromObject(computeDestinationPoint(endPt, perpendicularOffset, perpendicularBearing)));
-      polyLineBack.push(toLatLonFromObject(computeDestinationPoint(endPt, perpendicularOffset + BLOCKFACE_WIDTH, perpendicularBearing)));
-      break;
-    }
-    distanceDrawn += segmentLength;
-
-  }
-
-  // merge the two arrays with the back array reversed
-  const polyLine = polyLineFront.concat(polyLineBack.reverse());
-
-
-  L.polygon(polyLine, {
-    color: "#0000ff",
-    weight: 2,
-    fill: true,
-    fillColor: "#00ffff",
-    fillOpacity: 0.8,
-  }).addTo(map);
+  drawBlockfaces(blockfaces);
 
 
 }
@@ -447,13 +316,7 @@ function meterToGeoLib(meter: any) {
 }
 
 
-function onMakeBlocksButton_Clicked() {
-  for (let key in parkingBlocks) {
-    map.removeLayer(parkingBlocks[key]);
-  }
-  parkingBlocks = {};
 
-}
 
 
 
@@ -506,16 +369,3 @@ function convertToObjectArray(csvData: string[][]): Record<string, string>[] {
   });
 }
 
-function saveMapPosition(map: L.Map) {
-  const center = map.getCenter();
-  const zoom = map.getZoom();
-  localStorage.setItem('mapPosition', JSON.stringify({
-    lat: center.lat,
-    lng: center.lng,
-    zoom: zoom
-  }));
-}
-function loadMapPosition(): { lat: number; lng: number; zoom: number } | null {
-  const savedPosition = localStorage.getItem('mapPosition');
-  return savedPosition ? JSON.parse(savedPosition) : null;
-}
