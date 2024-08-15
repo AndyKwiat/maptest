@@ -11,8 +11,18 @@
 </head>
 
 <body>
-  <div id="map" style="width: 800px; height: 800px"></div>
-  <button id="make-blocks-button">Make Blocks</button>
+  <div style="display: flex;">
+    <div id="map" style="width: 800px; height: 800px; border: 1px solid black;"></div>
+    <div id="log-container"
+      style="width: 300px; height: 800px; margin-left: 10px; overflow-y: scroll; border: 1px solid black;">
+      <div id="log" style="padding: 10px;"></div>
+    </div>
+  </div>
+  <input type="checkbox" name="Nodes" id="Nodes" value="Nodes" checked>Nodes
+  <input type="checkbox" name="RoadSegments" id="RoadSegments" value="RoadSegments" checked>RoadSegments
+  <input type="checkbox" name="Meters" id="Meters" value="Meters" checked>Meters
+  <input type="checkbox" name="Blockfaces" id="Blockfaces" value="Blockfaces" checked>Blockfaces
+
   <!-- <script>var exports = {};</script> -->
   <!-- <script src="dist/bundle.js"></script> -->
 </body>
