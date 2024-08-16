@@ -7,8 +7,9 @@ import {
   showNodes, hideNodes, showRoadSegments, hideRoadSegments, showBlockfaces, hideBlockfaces, showMeters, hideMeters
 } from './gfx';
 
-import { RoadSegment, RoadSegmentChain, Parity, PerpendicularDirection, Node, Blockface, Way } from './types';
+import { RoadSegment, RoadSegmentChain, Parity, PerpendicularDirection, Node, Blockface, Way, MeterRoadSegmentPair } from './types';
 import { statusLog, toLatLon } from './utils';
+
 
 
 
@@ -124,9 +125,6 @@ async function main() {
           && way.tags.highway && !excludedHighways.includes(way.tags.highway)
         ) {
 
-          let tagString = Object.entries(way.tags)
-            .map(([key, value]) => `${key}: ${value}`)
-            .join('<br/>');
 
           for (let i = 0; i < coords.length - 1; i++) {
             let roadSegment = { way: way, p0: coords[i], p1: coords[i + 1], nodeIndex: i };
@@ -157,7 +155,7 @@ async function main() {
 
   const targetPole = "";  // for debugging purposes, leave empty if you want to see all meters
   const meterRoadSegments = new Set<RoadSegment>();
-  const meterSegmentPairs: [any, RoadSegment][] = [];
+  const meterSegmentPairs: MeterRoadSegmentPair[] = [];
 
   statusLog("finding closest road segments to each meter");
   // find closest segments for each meter
@@ -175,7 +173,7 @@ async function main() {
         let closestDist = -1;
         let centerOfSegment: { latitude: number, longitude: number } = { latitude: 0, longitude: 0 };
 
-        roadSegments.forEach(roadSegment => {
+        for (const roadSegment of roadSegments) {
           let center = getCenter([roadSegment.p0, roadSegment.p1]);
           if (center) {
             const dist = getDistanceFromLine(meterToGeoLib(targetMeter), roadSegment.p0, roadSegment.p1);
@@ -184,17 +182,30 @@ async function main() {
               closestSegment = roadSegment;
               centerOfSegment = getCenter([roadSegment.p0, roadSegment.p1]) || centerOfSegment;
             }
-
           }
-        });
+        };
+
         if (closestSegment && centerOfSegment.latitude != 0 && closestDist < 100) {
           meterRoadSegments.add(closestSegment);
-          meterSegmentPairs.push([targetMeter, closestSegment]);
+          // calculate perpendicular direction
+          const roadBearing = getRhumbLineBearing(closestSegment.p0, closestSegment.p1);
+          const meterBearing = getRhumbLineBearing(closestSegment.p0, meterToGeoLib(targetMeter));
+          // Calculate the difference
+          let diff = meterBearing - roadBearing;
 
-          // L.polyline([meterToLatLon(targetMeter), [centerOfSegment.latitude, centerOfSegment.longitude]], {
-          //   color: "#ff0000",
-          //   weight: 4,
-          // }).addTo(map);
+
+          // Normalize the difference to be between -180 and 180
+          if (diff > 180) {
+            diff -= 360;
+          } else if (diff < -180) {
+            diff += 360;
+          }
+          const direction = (diff > 0) ? PerpendicularDirection.CLOCKWISE : PerpendicularDirection.COUNTERCLOCKWISE;
+
+
+          meterSegmentPairs.push({ meter: targetMeter, roadSegment: closestSegment, direction });
+
+
         }
       }
     }
@@ -215,14 +226,15 @@ async function main() {
   statusLog("creating blockfaces");
   const blockfaces: Blockface[] = [];
   // create blockfaces
-  for (const [meter, segment] of meterSegmentPairs) {
+  for (const msp of meterSegmentPairs) {
+    const { meter, roadSegment, direction } = msp;
     const poleName = meter.Pole;
     // determine if pole name is even or odd based on last character in polename
     const lastChar = poleName[poleName.length - 1];
     const parity = lastChar % 2 == 0 ? Parity.EVEN : Parity.ODD;
-    const chain = chainSegmentMap.get(segment);
+    const chain = chainSegmentMap.get(roadSegment);
     if (!chain) {
-      console.log("No chain for segment", segment);
+      console.log("No chain for roadSegment", roadSegment);
       continue;
     }
     // see if blockface exists with same chain and parity
@@ -230,23 +242,13 @@ async function main() {
     if (existingBlockface) {
       continue;
     }
-    const roadBearing = getRhumbLineBearing(segment.p0, segment.p1);
-    const meterBearing = getRhumbLineBearing(segment.p0, meterToGeoLib(meter));
-    // Calculate the difference
-    let diff = meterBearing - roadBearing;
 
-    // Normalize the difference to be between -180 and 180
-    if (diff > 180) {
-      diff -= 360;
-    } else if (diff < -180) {
-      diff += 360;
-    }
 
     // create new blockface
     blockfaces.push({
       roadSegmentChain: chain,
       sideOfStreetParity: parity,
-      perpendicularDirection: diff > 0 ? PerpendicularDirection.CLOCKWISE : PerpendicularDirection.COUNTERCLOCKWISE,
+      perpendicularDirection: direction,
       perpendicularOffset: 3,
       startOffset: 8,
       endOffset: 8
