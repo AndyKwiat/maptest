@@ -187,22 +187,7 @@ async function main() {
 
         if (closestSegment && centerOfSegment.latitude != 0 && closestDist < 100) {
           meterRoadSegments.add(closestSegment);
-          // calculate perpendicular direction
-          const roadBearing = getRhumbLineBearing(closestSegment.p0, closestSegment.p1);
-          const meterBearing = getRhumbLineBearing(closestSegment.p0, meterToGeoLib(targetMeter));
-          // Calculate the difference
-          let diff = meterBearing - roadBearing;
-
-
-          // Normalize the difference to be between -180 and 180
-          if (diff > 180) {
-            diff -= 360;
-          } else if (diff < -180) {
-            diff += 360;
-          }
-          const direction = (diff > 0) ? PerpendicularDirection.CLOCKWISE : PerpendicularDirection.COUNTERCLOCKWISE;
-
-
+          const direction = calculatePerpendicularDirection(closestSegment, meterToGeoLib(targetMeter));
           meterSegmentPairs.push({ meter: targetMeter, roadSegment: closestSegment, direction });
 
 
@@ -210,17 +195,22 @@ async function main() {
       }
     }
   }
+  function createRoadSegmentKey(roadSegment: RoadSegment, direction: PerpendicularDirection): string {
+    return `${roadSegment.way.id}-${roadSegment.nodeIndex}-${direction}`;
+  }
 
   statusLog("creating road segment chains");
   // create road segment chains
-  const chainSegmentMap = new Map<RoadSegment, RoadSegmentChain>();
-  for (const segment of meterRoadSegments) {
-    if (chainSegmentMap.has(segment)) { // chain already exists
+  const chainSegmentMap = new Map<string, RoadSegmentChain>();
+  for (const msp of meterSegmentPairs) {
+    const { roadSegment, direction } = msp;
+    const key = createRoadSegmentKey(roadSegment, direction);
+    if (chainSegmentMap.has(key)) { // chain already exists
       continue;
     }
-    const chain = createRoadSegmentChain(segment, nodeToRoadSegmentMap);
+    const chain = createRoadSegmentChain(roadSegment, nodeToRoadSegmentMap, direction);
     //console.log("Chain: ", chain);
-    chainSegmentMap.set(segment, chain);
+    chainSegmentMap.set(key, chain);
   }
 
   statusLog("creating blockfaces");
@@ -232,7 +222,7 @@ async function main() {
     // determine if pole name is even or odd based on last character in polename
     const lastChar = poleName[poleName.length - 1];
     const parity = lastChar % 2 == 0 ? Parity.EVEN : Parity.ODD;
-    const chain = chainSegmentMap.get(roadSegment);
+    const chain = chainSegmentMap.get(createRoadSegmentKey(roadSegment, direction));
     if (!chain) {
       console.log("No chain for roadSegment", roadSegment);
       continue;
@@ -259,34 +249,78 @@ async function main() {
   statusLog("done");
 
 }
+function calculatePerpendicularDirection(segment: RoadSegment, geolibPoint: { latitude: number, longitude: number }): PerpendicularDirection {
+  // calculate perpendicular direction
+  const roadBearing = getRhumbLineBearing(segment.p0, segment.p1);
+  const meterBearing = getRhumbLineBearing(segment.p0, geolibPoint);
+  // Calculate the difference
+  let diff = meterBearing - roadBearing;
 
-function createRoadSegmentChain(middleSegment: RoadSegment, nodeToRoadSegmentMap: Map<number, RoadSegment[]>): RoadSegmentChain {
+
+  // Normalize the difference to be between -180 and 180
+  if (diff > 180) {
+    diff -= 360;
+  } else if (diff < -180) {
+    diff += 360;
+  }
+  const direction = (diff > 0) ? PerpendicularDirection.CLOCKWISE : PerpendicularDirection.COUNTERCLOCKWISE;
+  return direction;
+}
+function createRoadSegmentChain(middleSegment: RoadSegment, nodeToRoadSegmentMap: Map<number, RoadSegment[]>, direction: PerpendicularDirection): RoadSegmentChain {
 
   // go backwards to start of chain
-  let backwardSegments = findEndOfChain(middleSegment.p0, middleSegment, true, nodeToRoadSegmentMap);
+  let backwardSegments = findEndOfChain(middleSegment.p0, middleSegment, true, nodeToRoadSegmentMap, direction);
   let startSegment = backwardSegments[backwardSegments.length - 1];
   let startNode = startSegment.p1;
   // now go forwards to end of chain
-  let segments = findEndOfChain(startNode, startSegment, false, nodeToRoadSegmentMap);
+  let segments = findEndOfChain(startNode, startSegment, false, nodeToRoadSegmentMap, direction);
   return { segments: segments };
 }
 
-function findEndOfChain(startNode: Node, startSegment: RoadSegment, traverseBackwards: boolean, nodeToRoadSegmentMap: Map<number, RoadSegment[]>) {
+function findEndOfChain(startNode: Node, startSegment: RoadSegment, traverseBackwards: boolean, nodeToRoadSegmentMap: Map<number, RoadSegment[]>, direction: PerpendicularDirection) {
   let currentNode = startNode;
   let currentSegment = startSegment;
   let segmentChain: RoadSegment[] = [currentSegment];
 
   while (true) {
     let attachedSegments = nodeToRoadSegmentMap.get(currentNode.id);
-    if (attachedSegments?.length !== 2) {
-      // console.log("Node has more than 2 segments", currentNode, attachedSegments);
+    if (!attachedSegments) break;
+
+    if (attachedSegments.length > 3) {
+      // console.log("Node has more than 3 segments", currentNode, attachedSegments);
       break;
+    }
+    let ignoreSegment: RoadSegment | null = null;
+    // handle t-intersection
+    if (attachedSegments.length === 3) {
+      let joiningSegment = attachedSegments.find(segment => segment.way.tags.name !== currentSegment.way.tags.name);
+      if (!joiningSegment) {
+        //console.log("T-Intersection - Could not find joining segment", currentNode, attachedSegments);
+        break;
+      }
+      //console.log("T-Intersection", currentNode, attachedSegments);
+      let joiningNode = joiningSegment.p0 == currentNode ? joiningSegment.p1 : joiningSegment.p0;
+      //   console.log("Joining node", joiningNode);
+      let joiningDirection = calculatePerpendicularDirection(currentSegment, { latitude: joiningNode.lat, longitude: joiningNode.lon });
+      // console.log("Joining direction", joiningDirection);
+      // console.log("Current direction", direction);
+      // joining road is on the other side of the street so ignore it
+      if (joiningDirection !== direction) {
+
+        ignoreSegment = joiningSegment;
+      } else {
+        break;
+      }
     }
 
     let result = attachedSegments.find((attachedSegment) => { // find the other segment
+      if (ignoreSegment === attachedSegment) {
+        return false;
+      }
       if (attachedSegment !== currentSegment) {
         if (attachedSegment.way.tags.name !== currentSegment.way.tags.name) {
           console.log("Different street name", attachedSegment.way.tags.name, currentSegment.way.tags.name);
+          //console.log("Attached segments", attachedSegments);
           return false;
         }
         let possibleNextNode = attachedSegment.p0;
@@ -315,6 +349,7 @@ function findEndOfChain(startNode: Node, startSegment: RoadSegment, traverseBack
       break;
     }
   }
+
   return segmentChain;
 }
 
