@@ -43,3 +43,11 @@ export interface Blockface {
     startOffset: number;
     endOffset: number;
 }
+
+// a meter, it's closest road segment, and which side of the street it is on 
+export interface MeterRoadSegmentPair {
+    meter: any;
+    roadSegment: RoadSegment;
+    direction: PerpendicularDirection;
+
+}
